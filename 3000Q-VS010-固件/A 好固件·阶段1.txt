@@ -1,0 +1,345 @@
+A ºÃ¹Ì¼þ¡¤½×¶Î1
+root@Nwrt:~# uname -a
+Linux Nwrt 5.4.213 #0 SMP PREEMPT Sun Apr 14 05:49:22 2024 armv7l GNU/Linux
+root@Nwrt:~# find /lib/modules -name '*.ko' | sort
+/lib/modules/5.4.213/arp_tables.ko
+/lib/modules/5.4.213/arpt_mangle.ko
+/lib/modules/5.4.213/arptable_filter.ko
+/lib/modules/5.4.213/ath_pktlog.ko
+/lib/modules/5.4.213/bonding.ko
+/lib/modules/5.4.213/bootconfig.ko
+/lib/modules/5.4.213/bt_interface.ko
+/lib/modules/5.4.213/bt_rproc.ko
+/lib/modules/5.4.213/button-hotplug.ko
+/lib/modules/5.4.213/cfg80211.ko
+/lib/modules/5.4.213/crc-ccitt.ko
+/lib/modules/5.4.213/diagchar.ko
+/lib/modules/5.4.213/dwc3-qcom.ko
+/lib/modules/5.4.213/dwc3.ko
+/lib/modules/5.4.213/ecm.ko
+/lib/modules/5.4.213/ecm_ae_select.ko
+/lib/modules/5.4.213/gpio-button-hotplug.ko
+/lib/modules/5.4.213/input-core.ko
+/lib/modules/5.4.213/ip6_tables.ko
+/lib/modules/5.4.213/ip6_udp_tunnel.ko
+/lib/modules/5.4.213/ip6t_REJECT.ko
+/lib/modules/5.4.213/ip6table_filter.ko
+/lib/modules/5.4.213/ip6table_mangle.ko
+/lib/modules/5.4.213/ip_set.ko
+/lib/modules/5.4.213/ip_set_bitmap_ip.ko
+/lib/modules/5.4.213/ip_set_bitmap_ipmac.ko
+/lib/modules/5.4.213/ip_set_bitmap_port.ko
+/lib/modules/5.4.213/ip_set_hash_ip.ko
+/lib/modules/5.4.213/ip_set_hash_ipmark.ko
+/lib/modules/5.4.213/ip_set_hash_ipport.ko
+/lib/modules/5.4.213/ip_set_hash_ipportip.ko
+/lib/modules/5.4.213/ip_set_hash_ipportnet.ko
+/lib/modules/5.4.213/ip_set_hash_mac.ko
+/lib/modules/5.4.213/ip_set_hash_net.ko
+/lib/modules/5.4.213/ip_set_hash_netiface.ko
+/lib/modules/5.4.213/ip_set_hash_netnet.ko
+/lib/modules/5.4.213/ip_set_hash_netport.ko
+/lib/modules/5.4.213/ip_set_hash_netportnet.ko
+/lib/modules/5.4.213/ip_set_list_set.ko
+/lib/modules/5.4.213/ip_tables.ko
+/lib/modules/5.4.213/ip_tunnel.ko
+/lib/modules/5.4.213/ipq_cnss2.ko
+/lib/modules/5.4.213/ipt_ECN.ko
+/lib/modules/5.4.213/ipt_REJECT.ko
+/lib/modules/5.4.213/iptable_filter.ko
+/lib/modules/5.4.213/iptable_mangle.ko
+/lib/modules/5.4.213/iptable_nat.ko
+/lib/modules/5.4.213/iptable_raw.ko
+/lib/modules/5.4.213/leds-gpio.ko
+/lib/modules/5.4.213/libcrc32c.ko
+/lib/modules/5.4.213/macvlan.ko
+/lib/modules/5.4.213/mem_manager.ko
+/lib/modules/5.4.213/monitor.ko
+/lib/modules/5.4.213/nf_conncount.ko
+/lib/modules/5.4.213/nf_conntrack.ko
+/lib/modules/5.4.213/nf_conntrack_amanda.ko
+/lib/modules/5.4.213/nf_conntrack_broadcast.ko
+/lib/modules/5.4.213/nf_conntrack_h323.ko
+/lib/modules/5.4.213/nf_conntrack_irc.ko
+/lib/modules/5.4.213/nf_conntrack_netlink.ko
+/lib/modules/5.4.213/nf_conntrack_pptp.ko
+/lib/modules/5.4.213/nf_conntrack_rtcache.ko
+/lib/modules/5.4.213/nf_conntrack_rtsp.ko
+/lib/modules/5.4.213/nf_conntrack_sip.ko
+/lib/modules/5.4.213/nf_conntrack_snmp.ko
+/lib/modules/5.4.213/nf_conntrack_tftp.ko
+/lib/modules/5.4.213/nf_defrag_ipv4.ko
+/lib/modules/5.4.213/nf_defrag_ipv6.ko
+/lib/modules/5.4.213/nf_flow_table.ko
+/lib/modules/5.4.213/nf_flow_table_hw.ko
+/lib/modules/5.4.213/nf_log_common.ko
+/lib/modules/5.4.213/nf_log_ipv4.ko
+/lib/modules/5.4.213/nf_log_ipv6.ko
+/lib/modules/5.4.213/nf_nat.ko
+/lib/modules/5.4.213/nf_nat_amanda.ko
+/lib/modules/5.4.213/nf_nat_h323.ko
+/lib/modules/5.4.213/nf_nat_irc.ko
+/lib/modules/5.4.213/nf_nat_pptp.ko
+/lib/modules/5.4.213/nf_nat_rtsp.ko
+/lib/modules/5.4.213/nf_nat_sip.ko
+/lib/modules/5.4.213/nf_nat_snmp_basic.ko
+/lib/modules/5.4.213/nf_nat_tftp.ko
+/lib/modules/5.4.213/nf_reject_ipv4.ko
+/lib/modules/5.4.213/nf_reject_ipv6.ko
+/lib/modules/5.4.213/nf_socket_ipv4.ko
+/lib/modules/5.4.213/nf_socket_ipv6.ko
+/lib/modules/5.4.213/nf_tproxy_ipv4.ko
+/lib/modules/5.4.213/nf_tproxy_ipv6.ko
+/lib/modules/5.4.213/nfnetlink.ko
+/lib/modules/5.4.213/nls_base.ko
+/lib/modules/5.4.213/phy-qca-m31.ko
+/lib/modules/5.4.213/phy-qca-uniphy.ko
+/lib/modules/5.4.213/ppp_async.ko
+/lib/modules/5.4.213/ppp_generic.ko
+/lib/modules/5.4.213/pppoe.ko
+/lib/modules/5.4.213/pppox.ko
+/lib/modules/5.4.213/qca-mcs.ko
+/lib/modules/5.4.213/qca-nss-dp.ko
+/lib/modules/5.4.213/qca-nss-drv.ko
+/lib/modules/5.4.213/qca-nss-macsec.ko
+/lib/modules/5.4.213/qca-nss-pppoe.ko
+/lib/modules/5.4.213/qca-ssdk.ko
+/lib/modules/5.4.213/qca_ol.ko
+/lib/modules/5.4.213/qdf.ko
+/lib/modules/5.4.213/slhc.ko
+/lib/modules/5.4.213/ts_bm.ko
+/lib/modules/5.4.213/ts_fsm.ko
+/lib/modules/5.4.213/ts_kmp.ko
+/lib/modules/5.4.213/tun.ko
+/lib/modules/5.4.213/udc-core.ko
+/lib/modules/5.4.213/udp_tunnel.ko
+/lib/modules/5.4.213/umac.ko
+/lib/modules/5.4.213/usb-common.ko
+/lib/modules/5.4.213/usbcore.ko
+/lib/modules/5.4.213/vxlan.ko
+/lib/modules/5.4.213/wifi_3_0.ko
+/lib/modules/5.4.213/x_tables.ko
+/lib/modules/5.4.213/xt_CLASSIFY.ko
+/lib/modules/5.4.213/xt_CT.ko
+/lib/modules/5.4.213/xt_DSCP.ko
+/lib/modules/5.4.213/xt_FLOWOFFLOAD.ko
+/lib/modules/5.4.213/xt_FULLCONENAT.ko
+/lib/modules/5.4.213/xt_HL.ko
+/lib/modules/5.4.213/xt_LOG.ko
+/lib/modules/5.4.213/xt_MASQUERADE.ko
+/lib/modules/5.4.213/xt_REDIRECT.ko
+/lib/modules/5.4.213/xt_TCPMSS.ko
+/lib/modules/5.4.213/xt_TPROXY.ko
+/lib/modules/5.4.213/xt_addrtype.ko
+/lib/modules/5.4.213/xt_bpf.ko
+/lib/modules/5.4.213/xt_comment.ko
+/lib/modules/5.4.213/xt_connbytes.ko
+/lib/modules/5.4.213/xt_connlimit.ko
+/lib/modules/5.4.213/xt_connmark.ko
+/lib/modules/5.4.213/xt_conntrack.ko
+/lib/modules/5.4.213/xt_dscp.ko
+/lib/modules/5.4.213/xt_ecn.ko
+/lib/modules/5.4.213/xt_helper.ko
+/lib/modules/5.4.213/xt_hl.ko
+/lib/modules/5.4.213/xt_length.ko
+/lib/modules/5.4.213/xt_limit.ko
+/lib/modules/5.4.213/xt_mac.ko
+/lib/modules/5.4.213/xt_mark.ko
+/lib/modules/5.4.213/xt_multiport.ko
+/lib/modules/5.4.213/xt_nat.ko
+/lib/modules/5.4.213/xt_owner.ko
+/lib/modules/5.4.213/xt_physdev.ko
+/lib/modules/5.4.213/xt_pkttype.ko
+/lib/modules/5.4.213/xt_quota.ko
+/lib/modules/5.4.213/xt_recent.ko
+/lib/modules/5.4.213/xt_sctp.ko
+/lib/modules/5.4.213/xt_set.ko
+/lib/modules/5.4.213/xt_socket.ko
+/lib/modules/5.4.213/xt_state.ko
+/lib/modules/5.4.213/xt_statistic.ko
+/lib/modules/5.4.213/xt_string.ko
+/lib/modules/5.4.213/xt_tcpmss.ko
+/lib/modules/5.4.213/xt_tcpudp.ko
+/lib/modules/5.4.213/xt_time.ko
+root@Nwrt:~# lsmod
+arp_tables             16384  1 arptable_filter
+arpt_mangle            12288  0 
+arptable_filter        12288  0 
+ath_pktlog             20480  0 
+bonding                94208  1 qca_nss_pppoe
+bootconfig             12288  0 
+bt_interface           16384  1 bt_rproc
+bt_rproc               12288  0 
+button_hotplug         12288  0 
+cfg80211              241664  4 wifi_3_0,qca_ol,umac,qdf
+crc_ccitt              12288  1 ppp_async
+dwc3                   57344  0 
+dwc3_qcom              12288  0 
+ecm                   278528  0 
+gpio_button_hotplug    12288  0 
+input_core             32768  1 button_hotplug
+ip_set                 28672 16 xt_set,ip_set_list_set,ip_set_hash_netportnet,ip_set_hash_netport,ip_set_hash_netnet,ip_set_hash_netiface,ip_set_hash_net,ip_set_hash_mac,ip_set_hash_ipportnet,ip_set_hash_ipportip,ip_set_hash_ipport,ip_set_hash_ipmark,ip_set_hash_ip,ip_set_bitmap_port,ip_set_bitmap_ipmac,ip_set_bitmap_ip
+ip_set_bitmap_ip       16384  0 
+ip_set_bitmap_ipmac    16384  0 
+ip_set_bitmap_port     12288  0 
+ip_set_hash_ip         28672  0 
+ip_set_hash_ipmark     28672  0 
+ip_set_hash_ipport     32768  0 
+ip_set_hash_ipportip   32768  0 
+ip_set_hash_ipportnet   36864  0 
+ip_set_hash_mac        20480  0 
+ip_set_hash_net        32768  0 
+ip_set_hash_netiface   32768  0 
+ip_set_hash_netnet     36864  0 
+ip_set_hash_netport    32768  0 
+ip_set_hash_netportnet   36864  0 
+ip_set_list_set        16384  0 
+ip_tables              20480  5 iptable_nat,iptable_raw,iptable_mangle,iptable_filter
+ip_tunnel              20480  0 
+ip6_tables             16384 24 ip6table_mangle,ip6table_filter
+ip6_udp_tunnel         12288  1 vxlan
+ip6t_REJECT            12288  2 
+ip6table_filter        12288  1 
+ip6table_mangle        12288  1 
+ipq_cnss2             299008  1 qca_ol
+ipt_ECN                12288  0 
+ipt_REJECT             12288  2 
+iptable_filter         12288  1 
+iptable_mangle         12288  1 
+iptable_nat            12288  1 
+iptable_raw            12288  1 
+leds_gpio              12288  0 
+libcrc32c              12288  2 nf_nat,nf_conntrack
+macvlan                20480  0 
+mem_manager            24576  2 qca_ol,umac
+monitor               126976  0 
+nf_conncount           16384  1 xt_connlimit
+nf_conntrack           69632 34 ecm,xt_connlimit,nf_conncount,xt_state,xt_nat,xt_helper,xt_conntrack,xt_connmark,xt_connbytes,xt_REDIRECT,xt_MASQUERADE,xt_DSCP,xt_CT,nf_nat_tftp,nf_nat_snmp_basic,nf_nat_sip,nf_nat_rtsp,nf_nat_pptp,nf_nat_irc,nf_nat_h323,nf_nat_amanda,nf_nat,nf_flow_table,nf_conntrack_tftp,nf_conntrack_snmp,nf_conntrack_sip,nf_conntrack_rtsp,nf_conntrack_rtcache,nf_conntrack_pptp,nf_conntrack_netlink,nf_conntrack_irc,nf_conntrack_h323,nf_conntrack_broadcast,nf_conntrack_amanda
+nf_conntrack_amanda    12288  2 nf_nat_amanda
+nf_conntrack_broadcast   12288  1 nf_conntrack_snmp
+nf_conntrack_h323      40960  3 nf_nat_h323
+nf_conntrack_irc       12288  2 nf_nat_irc
+nf_conntrack_netlink   28672  0 
+nf_conntrack_pptp      12288  2 nf_nat_pptp
+nf_conntrack_rtcache   12288  0 
+nf_conntrack_rtsp      12288  2 nf_nat_rtsp
+nf_conntrack_sip       24576  3 nf_nat_sip
+nf_conntrack_snmp      12288  2 nf_nat_snmp_basic
+nf_conntrack_tftp      12288  2 nf_nat_tftp
+nf_defrag_ipv4         12288  3 nf_conntrack,xt_socket,xt_TPROXY
+nf_defrag_ipv6         12288  3 nf_conntrack,xt_socket,xt_TPROXY
+nf_flow_table          24576  2 xt_FLOWOFFLOAD,nf_flow_table_hw
+nf_flow_table_hw       12288  1 
+nf_log_common          12288  2 nf_log_ipv4,nf_log_ipv6
+nf_log_ipv4            12288  0 
+nf_log_ipv6            12288  0 
+nf_nat                 28672 11 iptable_nat,xt_nat,xt_REDIRECT,xt_MASQUERADE,nf_nat_tftp,nf_nat_sip,nf_nat_rtsp,nf_nat_pptp,nf_nat_irc,nf_nat_h323,nf_nat_amanda
+nf_nat_amanda          12288  0 
+nf_nat_h323            12288  0 
+nf_nat_irc             12288  0 
+nf_nat_pptp            12288  0 
+nf_nat_rtsp            12288  0 
+nf_nat_sip             16384  0 
+nf_nat_snmp_basic      12288  0 
+nf_nat_tftp            12288  0 
+nf_reject_ipv4         12288  1 ipt_REJECT
+nf_reject_ipv6         12288  1 ip6t_REJECT
+nf_socket_ipv4         12288  1 xt_socket
+nf_socket_ipv6         12288  1 xt_socket
+nf_tproxy_ipv4         12288  1 xt_TPROXY
+nf_tproxy_ipv6         12288  1 xt_TPROXY
+nfnetlink              12288  2 nf_conntrack_netlink,ip_set
+nls_base               12288  1 usbcore
+phy_qca_m31            12288  1 
+phy_qca_uniphy         12288  0 
+ppp_async              16384  0 
+ppp_generic            32768  5 ecm,ppp_async,qca_nss_pppoe,pppoe,pppox
+pppoe                  16384  2 ecm,qca_nss_pppoe
+pppox                  12288  1 pppoe
+qca_mcs                49152  2 ecm
+qca_nss_dp             28672  1 qca_nss_drv
+qca_nss_drv           253952  5 wifi_3_0,qca_ol,ecm,umac,qca_nss_pppoe
+qca_nss_macsec         94208  0 
+qca_nss_pppoe          12288  0 
+qca_ol               1232896  2 monitor,wifi_3_0
+qca_ssdk              405504  1 qca_nss_dp
+qdf                   114688  5 ath_pktlog,monitor,wifi_3_0,qca_ol,umac
+slhc                   12288  1 ppp_generic
+ts_bm                  12288  0 
+ts_fsm                 12288  0 
+ts_kmp                 12288  6 
+tun                    36864  0 
+udc_core               16384  1 dwc3
+udp_tunnel             12288  1 vxlan
+umac                 2736128  4 ath_pktlog,monitor,wifi_3_0,qca_ol
+usb_common             12288  4 dwc3,dwc3_qcom,udc_core,usbcore
+usbcore               139264  0 
+vxlan                  45056  0 
+wifi_3_0              692224  1 monitor
+x_tables               20480 54 xt_connlimit,xt_state,xt_nat,xt_helper,xt_conntrack,xt_connmark,xt_connbytes,xt_REDIRECT,xt_MASQUERADE,xt_FLOWOFFLOAD,xt_DSCP,xt_CT,ipt_REJECT,xt_time,xt_tcpudp,xt_tcpmss,xt_string,xt_statistic,xt_socket,xt_recent,xt_quota,xt_pkttype,xt_physdev,xt_owner,xt_multiport,xt_mark,xt_mac,xt_limit,xt_length,xt_hl,xt_ecn,xt_dscp,xt_comment,xt_bpf,xt_addrtype,xt_TPROXY,xt_TCPMSS,xt_LOG,xt_HL,xt_CLASSIFY,iptable_raw,iptable_mangle,iptable_filter,ipt_ECN,ip_tables,arptable_filter,arpt_mangle,arp_tables,xt_sctp,xt_set,ip6table_mangle,ip6table_filter,ip6_tables,ip6t_REJECT
+xt_CLASSIFY            12288  0 
+xt_CT                  12288 10 
+xt_DSCP                12288  0 
+xt_FLOWOFFLOAD         12288  0 
+xt_HL                  12288  0 
+xt_LOG                 12288  0 
+xt_MASQUERADE          12288  1 
+xt_REDIRECT            12288  0 
+xt_TCPMSS              12288  4 
+xt_TPROXY              12288  0 
+xt_addrtype            12288  0 
+xt_bpf                 12288  0 
+xt_comment             12288138 
+xt_connbytes           12288  0 
+xt_connlimit           12288  0 
+xt_connmark            12288  0 
+xt_conntrack           12288 15 
+xt_dscp                12288  0 
+xt_ecn                 12288  0 
+xt_helper              12288  0 
+xt_hl                  12288  0 
+xt_length              12288  0 
+xt_limit               12288 22 
+xt_mac                 12288  0 
+xt_mark                12288  0 
+xt_multiport           12288  0 
+xt_nat                 12288  0 
+xt_owner               12288  0 
+xt_physdev             12288  2 
+xt_pkttype             12288  0 
+xt_quota               12288  0 
+xt_recent              16384  0 
+xt_sctp                12288  0 
+xt_set                 12288  0 
+xt_socket              12288  0 
+xt_state               12288  0 
+xt_statistic           12288  0 
+xt_string              12288  0 
+xt_tcpmss              12288  0 
+xt_tcpudp              12288 22 
+xt_time                12288  0 
+root@Nwrt:~# cat /proc/cmdline
+console=ttyMSM0,115200n8 ubi.mtd=rootfs root=mtd:ubi_rootfs rootfstype=squashfs rootwait ubi.mtd=rootfs root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M
+root@Nwrt:~# zcat /proc/config.gz 2>/dev/null | grep -E 'LOCALVERSION|MODVERSIONS|MODULES|SMP|PREEMPT'
+CONFIG_LOCALVERSION=""
+# CONFIG_LOCALVERSION_AUTO is not set
+# CONFIG_PREEMPT_NONE is not set
+# CONFIG_PREEMPT_VOLUNTARY is not set
+CONFIG_PREEMPT=y
+CONFIG_PREEMPT_COUNT=y
+CONFIG_PREEMPTION=y
+CONFIG_PREEMPT_RCU=y
+CONFIG_HAVE_SMP=y
+CONFIG_SMP=y
+CONFIG_SMP_ON_UP=y
+CONFIG_PM_SLEEP_SMP=y
+CONFIG_GENERIC_SMP_IDLE_THREAD=y
+CONFIG_MODULES_USE_ELF_REL=y
+CONFIG_MODULES=y
+# CONFIG_MODVERSIONS is not set
+CONFIG_MODULES_TREE_LOOKUP=y
+CONFIG_QCOM_SMP2P=y
+# CONFIG_DEBUG_PREEMPT is not set
+root@Nwrt:~# strings $(find /lib/modules -name 'qca_ol.ko' | head -1) 2>/dev/null | grep -m1 '^vermagic='
+vermagic=5.4.213 SMP preempt mod_unload ARMv7 p2v8 
+root@Nwrt:~# 
