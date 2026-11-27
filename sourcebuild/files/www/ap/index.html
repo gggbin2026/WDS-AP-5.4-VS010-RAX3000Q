@@ -97,6 +97,38 @@ code{background:#1b2a3f;padding:1px 5px;border-radius:4px;color:#cfe0f5}
   background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .gaNote b{color:var(--txt);font-weight:600}
 .gaSub{font-size:12px;color:var(--dim);margin:14px 0 8px;letter-spacing:.4px;font-weight:600}
+
+
+/* r28：右上角按钮组强制贴右上；窄屏回落为普通流式 */
+header{position:relative}
+.hdrActions{position:absolute;right:16px;top:14px;display:flex;gap:8px;align-items:center;z-index:6}
+@media(max-width:760px){.hdrActions{position:static;margin:8px 0 0;flex-wrap:wrap}header{padding-right:0 !important}}
+
+/* r28：右上角「高级设置后台」开关 */
+.advBtn{display:inline-flex;align-items:center;gap:7px;padding:8px 14px;border-radius:8px;
+  background:linear-gradient(90deg,#7a5cf0,#1677d2);color:#fff!important;text-decoration:none;
+  font-weight:800;font-size:13px;border:1px solid rgba(255,255,255,.25);
+  box-shadow:0 2px 8px rgba(60,40,160,.3);white-space:nowrap}
+.advBtn:hover{filter:brightness(1.12)}
+.advBtn i{font-style:normal;width:9px;height:9px;border-radius:50%;background:#4ade80;
+  box-shadow:0 0 6px #4ade80}
+[hidden]{display:none!important}
+.netSub{margin:12px 0 6px;font-size:12.5px;font-weight:700;opacity:.78;letter-spacing:.4px}
+.gaTempLine{margin-top:8px;padding:8px 12px;border-radius:7px;background:rgba(255,255,255,.05);
+  font-size:13px;display:flex;justify-content:space-between;align-items:center}
+
+/* ── r29：状态栏 / 选项卡 / 按钮统一椭圆（两端都是圆弧） ── */
+.netSub,.portState,.badge,.pill,.dot,.tag,.gaBadge,.sigrow .lv,
+a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
+.vsf .nav,.vsf .nav a,.vsf button,.vsf .tr,.vsf .th,
+.vsf .msg,.vsf .lock,.vsf input,.vsf select{border-radius:999px !important}
+.netSub{display:inline-block !important;margin:12px 0 8px !important;padding:6px 15px !important;
+  font-size:12px;letter-spacing:.4px;opacity:1;background:rgba(74,222,128,.12);
+  border:1px solid rgba(74,222,128,.35);color:#86efac;font-weight:700}
+.portState{display:inline-block;padding:2px 10px;font-size:11px;font-weight:700;
+  background:rgba(74,222,128,.14);color:#86efac;border:1px solid rgba(74,222,128,.30)}
+.vsf .nav{padding:8px 14px !important}
+.vsf .nav a{padding:6px 15px !important}
 </style>
 </head>
 <body>
@@ -106,54 +138,19 @@ code{background:#1b2a3f;padding:1px 5px;border-radius:4px;color:#cfe0f5}
   <h1>AP 控制台</h1>
   <span class="tag">普通 AP 模式 · 不是 WDS 网桥</span>
   <div class="meta">型号 <b id="model">—</b>　管理 <b id="admin_ip">172.10.10.241</b>　运行 <b id="up">—</b>　<span id="clock">—</span></div>
-  <div class="spacer"></div>
+  <div class="hdrActions">
   <a class="btn" id="refresh">立即刷新</a>
-  <a class="btn" id="luci" href="../cgi-bin/luci">LuCI</a>
+  <a class="advBtn adv" href="/cgi-bin/luci/" id="luci" title="进 OpenWrt / LuCI 后台（未登录会先跳登录页）"><i></i>高级设置后台</a>
+  </div>
 </header>
 
-<div class="how">
-  <h2>🔌 本机 DHCP 是关的 —— 这 3 种方法都能进这台 AP 调试</h2>
-  <ol>
-    <li><b>不接上级、直接拿网线连</b>：PC 网卡手动设 <code>172.10.10.10</code> / <code>255.255.252.0</code>，网关留空，浏览器开 <code>http://<b id="how_ip">172.10.10.241</b></code>。<b>静态管理地址本来就不依赖 DHCP</b>，不需要任何 DHCP 服务。</li>
-    <li><b>接在上级路由下面</b>：只要上级是 <code>172.10.8.0/22</code>，PC 自动从上级拿到地址后直接开 <code>http://172.10.10.241</code>；上级是别的网段就串口敲 <code>bridge-ap dhcp</code> 让 AP 自动取址，再去上级的客户端列表找它。</li>
-    <li><b>任何网段都不确定时</b>：AP 额外带一个链路本地地址 <code>169.254.240.1</code>，PC 设 <code>169.254.240.2/16</code> 也能直接连（不用改上级、不会冲突）。</li>
-  </ol>
-  <div style="margin-top:8px;font-size:12.5px;color:#bff0d1">账号 <code>root</code> / <code>admin</code>。调试完想临时让 AP 自己发地址：<code>bridge-ap rescue</code>；恢复哑 AP：<code>bridge-ap ap</code>。</div>
+
 </div>
 
 <div class="err" id="err"></div>
 
-<h2>无线射频 · RADIO（两个都是普通 AP，无 WDS）</h2>
-<div class="grid" id="radios"></div>
-
-<h2>已连接的终端 · CLIENTS（对端信号强度）</h2>
-<div class="card" style="border-left-color:#6ea8fe">
-  <div id="clients"><div class="empty">读取中…</div></div>
-  <div id="cliLegend"></div>
-  <div class="cmd" id="pctNote">—</div>
-</div>
-
-<h2>弱信号剔除 · RSSI GUARD（仅 AP 模式）</h2>
-<div class="card" style="border-left-color:#eab308">
-  <div class="ct"><span class="cn">守护状态</span><span class="dot" id="guardDot">读取中</span></div>
-  <div class="kv" id="guardkv"></div>
-  <div class="cmd" id="guardLog">读取中…</div>
-  <div class="cmd" style="color:var(--warn);background:#2a2113;border-color:#6b5420" id="guardNote">—</div>
-  <div class="cmd">ap-rssi-guard status        # 看阈值 / 统计 / 最近动作
-ap-rssi-guard dryrun on     # 只记日志不真踢（先这样验证）
-ap-rssi-guard off           # 停用；on 恢复
-ap-rssi-guard set reject -90  /  set kick -92  /  set interval 3</div>
-</div>
-
-<h2>已插网线 · LINK UP</h2>
-<div class="card" id="links"><div class="empty">读取中…</div></div>
-
-<h2>网络与本机 · NETWORK</h2>
-<div class="grid" id="netgrid"></div>
-
-<h2>系统资源 · SYSTEM</h2>
-  <!-- 第 32 次：系统资源仪表盘（两个环形表 + 微卡；纯内联，不引任何外部库） -->
-  <div class="gaPanel">
+<h2>系统仪表盘 · GAUGE</h2>
+<div class="gaPanel">
     <div class="gaHead">
       <span>系统仪表盘 · GAUGE</span>
       <span class="gaBadge" id="gaBadge">读取中</span>
@@ -188,7 +185,7 @@ ap-rssi-guard set reject -90  /  set kick -92  /  set interval 3</div>
         </div>
       </div>
     </div>
-    <div class="gaChips">
+    <div class="gaChips" hidden>
       <div><i>CPU 当前频率</i><b id="gaFreq">—</b><small id="gaRange">—</small></div>
       <div><i>核心数</i><b id="gaCores">—</b></div>
       <div><i>负载 1 / 5 / 15</i><b id="gaLoad">—</b></div>
@@ -197,29 +194,42 @@ ap-rssi-guard set reject -90  /  set kick -92  /  set interval 3</div>
       <div><i>总量 / 已用</i><b id="gaMemTotal">—</b><small id="gaMemUsed">—</small></div>
       <div><i>Swap 已用 / 总量</i><b id="gaSwap">—</b></div>
     </div>
-    <div class="gaNote" id="gaNote">
+    <div class="gaNote" id="gaNote" hidden>
       ⚠ <b>CPU / 内存使用率</b>按占用率配色：<b>0–49% 绿（空闲）· 50–69% 黄绿（适中）· 70–84% 黄（偏高）· 85–100% 红（吃紧）</b>；
       <b>CPU 温度</b>独立色阶（0–100 °C 量程）：<b>&lt;50°C 绿（常温）· 50–64 黄绿（温热）· 65–74 黄（偏高）· ≥75 红（过热）</b>。
       三者都是<b>越低越好</b>，与「对端信号强度」进度条（越高越好）语义相反。
       频率 / 温度传感器缺失时如实显示「不可用 / 无传感器」，不用 0 冒充。
     </div>
+    <div class="gaTempLine"><span>🌡 无线芯片温度</span><b id="gaWifiTemp">—</b></div>
   </div>
-  <div class="gaSub">详细数值 · DETAIL（原有文字卡片整块保留，便于核对精确 kB 与状态徽章）</div>
-<div class="grid">
-  <div class="card" id="syscpu"><div class="ct"><span class="cn">CPU</span><span class="dot" id="cpudot">读取中</span></div>
-    <div class="bigrow"><span class="big" id="sysCpuMhz">—</span><span class="bigsub" id="sysCpuMhzUnit">MHz</span></div>
-    <div class="meter"><i id="cpuFill"></i></div>
-    <div class="kv"><span>频率范围</span><span id="sysCpuRange">—</span><span>核心数</span><span id="sysCpuCores">—</span>
-      <span>使用率</span><span id="sysCpuPct">—</span><span>负载 1/5/15</span><span id="sysLoad">—</span>
-      <span>温度</span><span id="sysTemp">—</span><span>无线芯片温度</span><span id="wifiTemp">—</span></div>
-  </div>
-  <div class="card" id="sysmem"><div class="ct"><span class="cn">内存</span><span class="dot" id="memdot">读取中</span></div>
-    <div class="bigrow"><span class="big" id="sysMemAvail">—</span><span class="bigsub">MB 可用（剩余）</span></div>
-    <div class="meter"><i id="memFill"></i></div>
-    <div class="kv"><span>总量</span><span id="sysMemTotal">—</span><span>已用</span><span id="sysMemUsed">—</span>
-      <span>剩余(精确)</span><span id="sysMemFree">—</span><span>使用率</span><span id="sysMemPct">—</span>
-      <span>Swap</span><span id="sysSwap">—</span></div>
-  </div>
+<h2>常用设置控制台 · SETUP（需登录；模式 / WDS / AP 无线 / 射频 / 网络 / 维护 全在这）</h2>
+<div class="card" id="vs010-setup" data-mode="ap" style="padding:14px"><div class="empty">读取中…</div></div>
+<div class="cmd" style="color:#b91c1c;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端（本机 WDS 与 AP 均已关闭），内网只允许上级一台 DHCP</div>
+
+<h2>网络与本机 · NETWORK</h2>
+<div class="grid" id="netgrid"></div>
+<div class="netSub" id="portStatus">🟢 网口状态 · PORT STATUS · 读取中…</div>
+<div class="card" id="links" style="margin-top:4px"><div class="empty">读取中…</div></div>
+<h2>无线射频 · RADIO（两个都是普通 AP，无 WDS）</h2>
+<div class="grid" id="radios"></div>
+
+<h2>已连接的终端 · CLIENTS（对端信号强度）</h2>
+<div class="card" style="border-left-color:#6ea8fe">
+  <div id="clients"><div class="empty">读取中…</div></div>
+  <div id="cliLegend"></div>
+  <div class="cmd" id="pctNote">—</div>
+</div>
+
+<h2>弱信号剔除 · RSSI GUARD（仅 AP 模式）</h2>
+<div class="card" style="border-left-color:#eab308">
+  <div class="ct"><span class="cn">守护状态</span><span class="dot" id="guardDot">读取中</span></div>
+  <div class="kv" id="guardkv"></div>
+  <div class="cmd" id="guardLog">读取中…</div>
+  <div class="cmd" style="color:var(--warn);background:#2a2113;border-color:#6b5420" id="guardNote">—</div>
+  <div class="cmd">ap-rssi-guard status        # 看阈值 / 统计 / 最近动作
+ap-rssi-guard dryrun on     # 只记日志不真踢（先这样验证）
+ap-rssi-guard off           # 停用；on 恢复
+ap-rssi-guard set reject -90  /  set kick -92  /  set interval 3</div>
 </div>
 
 <h2>无线板级数据自检 · BDF（信号强弱就看这里）</h2>
@@ -248,11 +258,21 @@ wifi-bdf-check           # 无线 BDF / 校准 / 功率自检</div>
 </div>
 
 <div class="foot">
-  <div>页面 10 秒自动刷新；数据源 <code>/cgi-bin/apstatus</code> 只读、不修改任何配置。LuCI 在 <code>/cgi-bin/luci</code>；WDS 网桥版是另一套固件、另一套页面。</div>
+  <div>页面 10 秒自动刷新；数据源 <code>/cgi-bin/apstatus</code> 只读、不修改任何配置。高级设置后台 <code>/cgi-bin/luci/</code>；AP 与 WDS 网桥是<b>同一固件的两种模式</b>，在常用设置里切换。</div>
   <div>TIME 停在 1970 属预期（板子无 RTC + AP 不供时）。固件构建 <b id="fwBuild">—</b>。完整说明、刷机与排障 → 仓库唯一文档 <code>FIRMWARE.md</code> 第二十七 / 二十八节。</div>
 </div>
 
 </div>
+
+<div class="how">
+  <h2>🔌 本机 DHCP 是关的 —— 这 3 种方法都能进这台 AP 调试</h2>
+  <ol>
+    <li><b>不接上级、直接拿网线连</b>：PC 网卡手动设 <code>172.10.10.10</code> / <code>255.255.252.0</code>，网关留空，浏览器开 <code>http://<b id="how_ip">172.10.10.241</b></code>。<b>静态管理地址本来就不依赖 DHCP</b>，不需要任何 DHCP 服务。</li>
+    <li><b>接在上级路由下面</b>：只要上级是 <code>172.10.8.0/22</code>，PC 自动从上级拿到地址后直接开 <code>http://172.10.10.241</code>；上级是别的网段就串口敲 <code>bridge-ap dhcp</code> 让 AP 自动取址，再去上级的客户端列表找它。</li>
+    <li><b>任何网段都不确定时</b>：AP 额外带一个链路本地地址 <code>169.254.240.1</code>，PC 设 <code>169.254.240.2/16</code> 也能直接连（不用改上级、不会冲突）。</li>
+  </ol>
+  <div style="margin-top:8px;font-size:12.5px;color:#bff0d1">账号 <code>root</code> / <code>admin</code>。调试完想临时让 AP 自己发地址：<code>bridge-ap rescue</code>；恢复哑 AP：<code>bridge-ap ap</code>。</div>
+
 <script>
 
 /* 第 15 次：共用 /cgi-bin/vs010-links —— 只显示【已插网线】的口 + 网络/地址分配 */
@@ -260,24 +280,37 @@ function esc2(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){retu
 function drawLinks(L){
   var box=$('links'); if(!box) return;
   var a=(L&&L.links)||[];
-  if(!a.length){ box.innerHTML='<div class="empty">未检测到已插网线的网口</div>'; return; }
+  if(!a.length){ box.innerHTML='<div class="empty">未检测到已插网线的网口</div>';
+    var ps0=$('portStatus'); if(ps0) ps0.innerHTML='⚪ 网口状态 · PORT STATUS · 未检测到已插线端口'; return; }
+  /* r28：端口显示成真实内网 LAN 口名；1000M → 1G，100M → 100M */
+  function lanName(p,i){ if(p.lan) return p.lan; return '内网LAN'+(i+1); }
+  function speedText(n){
+    n=Number(n)||0; if(n<=0) return '—';
+    if(n>=1000) return (n%1000===0 ? (n/1000)+'G' : (n/1000).toFixed(1)+'G');
+    return n+'M';
+  }
   var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="opacity:.65;text-align:left">'+
-        '<th style="padding:6px 8px">端口</th><th style="padding:6px 8px">链接速率</th>'+
-        '<th style="padding:6px 8px">双工</th><th style="padding:6px 8px">来源</th></tr>';
-  a.forEach(function(p){
-    var sp=(Number(p.speed)||0)>0 ? (p.speed+' Mb/s') : '—';
-    h+='<tr style="border-top:1px solid rgba(255,255,255,.08)">'+
-       '<td style="padding:6px 8px"><b>'+esc2(p['if'])+'</b></td>'+
-       '<td style="padding:6px 8px"><b>'+esc2(sp)+'</b></td>'+
-       '<td style="padding:6px 8px">'+esc2(p.duplex||'-')+'</td>'+
-       '<td style="padding:6px 8px;opacity:.75">'+(p.src==='phy'?'<b>PHY 实测</b>':esc2(p.src))+'</td></tr>';
+        /* r29：这一块是「网口状态 / 网口信息」，链接速率只是其中一列 */
+        '<th style="padding:6px 8px">内网 LAN</th><th style="padding:6px 8px">接口</th>'+
+        '<th style="padding:6px 8px">链接状态</th><th style="padding:6px 8px">链接速率</th>'+
+        '<th style="padding:6px 8px">双工</th><th style="padding:6px 8px">速率来源</th></tr>';
+  var ps=$('portStatus'); if(ps) ps.innerHTML='🟢 网口状态 · PORT STATUS · '+a.length+' 个端口 LINK UP（仅列已插线）';
+  a.forEach(function(p,i){
+     h+='<tr style="border-top:1px solid rgba(255,255,255,.08)">'+
+        '<td style="padding:6px 8px"><b>'+esc2(lanName(p,i))+'</b></td>'+
+        '<td style="padding:6px 8px;opacity:.8">'+esc2(p.if||'-')+'</td>'+
+        '<td style="padding:6px 8px"><span class="portState">● LINK UP</span></td>'+
+        '<td style="padding:6px 8px"><b>'+esc2(speedText(p.speed))+'</b></td>'+
+        '<td style="padding:6px 8px">'+esc2(p.duplex||'-')+'</td>'+
+        '<td style="padding:6px 8px;opacity:.75">'+(p.src==='phy'?'<b>PHY 实测</b>':esc2(p.src||'-'))+'</td></tr>';
   });
   var wt=(L&&L.wifi_temp)||{};
   var wth=wt.has ? ('<b>'+esc2(wt.c)+' °C</b> · '+esc2(wt.src||'无线芯片')) : '—（无线芯片无温度传感器）';
   window.__wifiTemp=wth;
   var wb=$('wifiTemp'); if(wb) wb.innerHTML=wth;
+  var gt=$('gaWifiTemp'); if(gt) gt.innerHTML=wth;
   box.innerHTML=h+'</table>'+
-    '<div class="hint" style="margin-top:6px">只列已插网线的口；<b>链接速率</b>：netdev 不上报时改读交换芯片 PHY 实测值（已标注来源）。</div>'+
+    '<div class="hint" style="margin-top:6px"><b>网口状态 / 网口信息</b>：只列已插线端口；<b>链接速率</b> netdev 不上报时改读交换芯片 PHY 实测值（已标注来源），1000M 显示为 1G。</div>'+
     '<div class="hint" style="margin-top:4px">🌡 <b>无线芯片温度</b>：<span id="wifiTempInline">'+wth+'</span></div>';
 }
 function drawNetCards(n){
@@ -403,7 +436,7 @@ function drawBdf(b){
 function drawSys(y){
   y=y||{};
   var cpct=Number(y.cpu_usage_pct)||0, mpct=Number(y.mem_used_pct)||0;
-  function set(i,v){$(i).textContent=(v===undefined||v===null||v==='')?'—':v}
+  function set(i,v){var e=$(i); if(e) e.textContent=(v===undefined||v===null||v==='')?'—':v}
   set('sysCpuMhz', y.cpu_has_freq?y.cpu_mhz:'—');
   set('sysCpuMhzUnit', y.cpu_has_freq?'MHz（当前）':'无 cpufreq 节点');
   set('sysCpuRange', y.cpu_has_freq?(y.cpu_mhz_min+' – '+y.cpu_mhz_max+' MHz'):'不可用');
@@ -411,17 +444,17 @@ function drawSys(y){
   set('sysLoad',(y.load1||'-')+' / '+(y.load5||'-')+' / '+(y.load15||'-'));
   set('sysTemp', y.temp_has?(y.temp_c+' °C'):'—（无传感器）');
     set('wifiTemp', window.__wifiTemp || y.wifi_temp_c || '—（无传感器）');
-  $('sysTemp').style.color = y.temp_has ? tempColor(y.temp_c) : '#65758c';
-  $('cpuFill').style.width=cpct+'%';
-  $('cpudot').className='dot '+(cpct>=80?'warn':'up'); $('cpudot').textContent=cpct>=80?'偏高':'正常';
+  var _t=$('sysTemp'); if(_t) _t.style.color = y.temp_has ? tempColor(y.temp_c) : '#65758c';
+  var _cf=$('cpuFill'); if(_cf) _cf.style.width=cpct+'%';
+  var _cd=$('cpudot'); if(_cd){_cd.className='dot '+(cpct>=80?'warn':'up'); _cd.textContent=cpct>=80?'偏高':'正常';}
   set('sysMemAvail', y.mem_has?String(y.mem_avail).replace(' MB',''):'—');
   set('sysMemTotal', y.mem_has?y.mem_total:'—');
   set('sysMemUsed', y.mem_has?(y.mem_used+' · '+mpct+' %'):'—');
   set('sysMemFree', y.mem_has?((y.mem_avail_kb||0)+' kB'):'—');
   set('sysMemPct', y.mem_has?(mpct+' %'):'—');
   set('sysSwap',(Number(y.swap_total_kb)||0)>0?((y.swap_used_kb||0)+' / '+(y.swap_total_kb||0)+' kB'):'无 Swap');
-  $('memFill').style.width=mpct+'%';
-  $('memdot').className='dot '+(mpct>=85?'warn':'up'); $('memdot').textContent=mpct>=85?'偏紧':'充足';
+  var _mf=$('memFill'); if(_mf) _mf.style.width=mpct+'%';
+  var _md=$('memdot'); if(_md){_md.className='dot '+(mpct>=85?'warn':'up'); _md.textContent=mpct>=85?'偏紧':'充足';}
 }
 
 function drawAccel(ac){
@@ -538,9 +571,10 @@ function load(){
   next();
   loadLinks();               /* 第 15 次：AP 页也显示已插网线的速率 */
 }
-$('luci').href='../cgi-bin/luci';
+$('luci').href='/cgi-bin/luci/';
 $('refresh').onclick=function(e){e.preventDefault();load()};
 load();setInterval(load,10000);
 </script>
+<script src="../vs010-setup.js"></script>
 </body>
 </html>

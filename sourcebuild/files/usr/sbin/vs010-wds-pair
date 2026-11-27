@@ -12,6 +12,22 @@ WDS_SEC=wds_z                      # 仅「5G 上无任何 iface」时的兜底�
 WDS_SSID=WDS-Bridge-Z
 WDS_KEY=WDS123456
 log(){ logger -t vs010-wds-pair "$*" 2>/dev/null || true; }
+# ★ r26：界面配置持久化在 /etc/vs010/user.cfg；每次 converge 重读，重启不丢
+cfg_get(){ [ -f "$D/user.cfg" ] || { printf ''; return; }; \
+           sed -n "s/^$1=//p" "$D/user.cfg" 2>/dev/null | head -n 1; }
+resolve_wds(){
+  a=$(cfg_get wds_ssid); [ -n "$a" ] || a=WDS-Bridge-Z
+  b=$(cfg_get wds_key);  [ -n "$b" ] || b=WDS123456
+  c=$(cfg_get ch5g);     [ -n "$c" ] || c=auto
+  if [ "$(cat "$ROLE" 2>/dev/null || echo ap)" = sta ]; then
+    p=$(cfg_get peer_ssid); [ -n "$p" ] && a=$p
+    q=$(cfg_get peer_key);  [ -n "$q" ] && b=$q
+    WDS_BSSID=$(cfg_get peer_bssid)
+  else
+    WDS_BSSID=''
+  fi
+  WDS_SSID=$a; WDS_KEY=$b; WDS_CH=$c
+}
 vap(){ for i in ath1 wifi1 wlan1 ath0 wifi0; do
   [ -d "/sys/class/net/$i" ] && { echo "$i"; return; }; done; echo ''; }
 mymac(){ for i in br-lan eth0 eth1; do
@@ -75,13 +91,14 @@ converge(){
   d=$(dev5g)
   role=$(cat "$ROLE" 2>/dev/null || echo ap)
   [ "$role" = sta ] || role=ap
+  resolve_wds   # ★ r26：主端 wds_ssid / 客户端 peer_ssid + 信道 + BSSID
   # ★ 第 16 次：无线信道【自动】。官方 qcawifi.sh:1846 明确写着
   #   `[ auto = "$channel" ] && channel=0`，即 auto 是 QSDK 原生合法值，
   #   转 0 后由 ACS 自动选道；后面的 `[ $channel -eq 36 ]` 不会崩。
   #   HE160 仍由 `11axa + HT160` → qcawifi.sh:2578 转 11AHE160，与自动选道不冲突。
   uci -q set "wireless.$d.hwmode=11axa"
   uci -q set "wireless.$d.htmode=HT160"
-  uci -q set "wireless.$d.channel=auto"
+  uci -q set "wireless.$d.channel=$WDS_CH"
   uci -q set "wireless.$d.disabled=0"
   # 备份一次（只供 off 参考，不整体覆盖）
   [ -f "$D/wireless.orig" ] || cp -f /etc/config/wireless "$D/wireless.orig" 2>/dev/null || true
@@ -115,6 +132,12 @@ converge(){
   uci -q set "wireless.$primary.encryption=psk2+ccmp"
   uci -q set "wireless.$primary.key=$WDS_KEY"
   uci -q set "wireless.$primary.disabled=0"
+  # ★ r26：客户端可填主端 BSSID 定向桥接；不填则清掉旧值，不锁定
+  if [ "$role" = sta ] && [ -n "$WDS_BSSID" ]; then
+    uci -q set "wireless.$primary.bssid=$WDS_BSSID"
+  else
+    uci -q delete "wireless.$primary.bssid" 2>/dev/null || true
+  fi
   # ★ 第 15 次：网桥模式同样开 MU-MIMO + WMM（官方 qcawifi.sh 识别的字段）
   uci -q set "wireless.$primary.wmm=1"
   uci -q set "wireless.$primary.he_ulmumimo=1"
@@ -125,7 +148,7 @@ converge(){
   #   字段来自官方 qcawifi.sh:2617/2620 的 iwpriv db_rssi_thr / db_timeout。
   WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
   uci -q set "wireless.$primary.db_rssi_thr=$WEAK"
-  uci -q set "wireless.$primary.db_timeout=10"
+  uci -q set "wireless.$primary.db_timeout=$(cat "$D/weak.timeout" 2>/dev/null || echo 10)"
   uci -q delete "wireless.$primary.wds"        2>/dev/null || true
   uci -q delete "wireless.$primary.wds_bridge" 2>/dev/null || true
   if [ "$role" = ap ]; then

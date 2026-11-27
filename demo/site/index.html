@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VS010 · 正在进入状态页…</title>
+<style>
+html,body{margin:0;height:100%;background:#0f1724;color:#e8eef8;
+  font:14px/1.7 -apple-system,"WenQuanYi Micro Hei",sans-serif;display:flex;
+  align-items:center;justify-content:center;text-align:center}
+.box{max-width:520px;padding:28px}
+h1{font-size:19px;margin:0 0 10px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:#4ade80;
+  box-shadow:0 0 8px #4ade80;margin-right:8px;animation:bl 1.2s infinite}
+@keyframes bl{50%{opacity:.35}}
+a{color:#8ab4ff}
+small{opacity:.65;display:block;margin-top:14px}
+</style></head><body>
+<div class="box">
+  <h1><span class="dot"></span><span id="msg">正在进入设备状态页…</span></h1>
+  <div id="sub">只读状态无需登录；修改配置需登录 LuCI。</div>
+  <small>没有自动跳转？<a href="/bridge/">网桥状态</a> · <a href="/ap/">AP 状态</a> · <a href="/cgi-bin/luci/">高级设置后台</a><br>🔧 OpenWrt / LuCI 后台直达路径：<code>http://&lt;设备IP&gt;/cgi-bin/luci/</code>（默认 <code>http://172.10.10.241/cgi-bin/luci/</code>；不带尾斜杠亦可）。根路径 <code>/</code> 现为状态页跳转，不再直达 LuCI。</small>
+</div>
+<script>
+/* r28：刷完默认网桥模式；输入管理 IP → 自动跳到当前模式对应的界面。
+   静态页、不依赖登录；/cgi-bin/vs010 读不到时兜底 /bridge/。 */
+(function(){
+  var go=function(m){
+    var t=(m==='ap')?'/ap/':'/bridge/';
+    document.getElementById('msg').textContent=(m==='ap')?'正在进入 AP 状态页…':'正在进入网桥状态页…';
+    location.replace(t);
+  };
+  // 3 秒兜底：CGI 不通也保证能进网桥界面
+  var done=false;
+  var timer=setTimeout(function(){ if(!done){done=true;go('wds');} },3000);
+  fetch('/cgi-bin/vs010?_='+Date.now(),{cache:'no-store'})
+    .then(function(r){return r.json();})
+    .then(function(j){
+      if(done)return; done=true; clearTimeout(timer);
+      var m=(j&&(j.mode==='ap'||j.mode==='wds'))?j.mode:'wds';
+      go(m);
+    })
+    .catch(function(){ if(done)return; done=true; clearTimeout(timer); go('wds'); });
+})();
+</script></body></html>

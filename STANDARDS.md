@@ -16,7 +16,7 @@
 | 4 | 🔴 `bootargs-append` 不可删 | U-Boot env 实测只给 `console=ttyMSM0,115200n8`；`ubi.mtd=rootfs swiotlb=1` 必须来自内核 DTS，删了挂载不上 rootfs |
 | 5 | 不重建 radio / 不 `wifi down` / 不重启机器 | 只改既有 `wifi-device`/`wifi-iface` 的 option |
 | 6 | 一台机器一个常驻 | 仅 `vs010-tick`；机器狗出厂停用、DHCP guard 默认 monitor |
-| 7 | 双线不再互相覆盖 | r25 全能包本身即单线：只留 `build-source.yml`，无融合线残留，清空仓库解压即用 |
+| 7 | 双线不再互相覆盖 | r26 全能包本身即单线（新增可切模式 + 设置面板）：只留 `build-source.yml`，无融合线残留，清空仓库解压即用 |
 
 ## 二、内存占用低
 
@@ -78,3 +78,73 @@
 - 没实机、没跑 GitHub Actions 的 `make` 时，只交静态/注入/自检真跑结果
 - `iw dev` 双频接口、HE160、4addr 以刷完实机为准
 - 010 按键 GPIO 改的是内核 DTS；U-Boot 单槽（`APPSBL_1` 全 FF），救砖 TTL 在手边
+
+---
+
+## 九、配置入口与工作模式（r26 起，每版强制）
+
+| 项 | 硬要求 |
+|---|---|
+| **写入必须鉴权** | 所有能改 SSID / 密码 / 角色 / 信道 / 模式的端点**只在 LuCI admin 树下**（继承 `root.sysauth`）；未登录自动 302 到登录页，`save()` 再做一次会话核实 + 403。**零裸 CGI 写入端点** |
+| **直接输网址** | 状态页只读可见；配置面板探测到未登录就**锁定保存**并显示登录入口。从主题菜单进入时已登录，可直接操作 |
+| **联动唯一入口** | `/usr/sbin/vs010-apply-config`：字段白名单 → 校验 → 原子写 `/etc/vs010/user.cfg`(600) → uci wireless → **一次** `/sbin/wifi reload` |
+| **重启不丢** | `vs010-mode` / `vs010-wds-pair` 每次开机重读 `user.cfg`；空字段保持原值，不覆盖用户其它设置 |
+| **不重建 radio** | 只改既有 `wifi-iface` 的 option 与 `disabled`；绝不 `wifi down`、绝不新增常驻进程、绝不重启机器 |
+| **模式可切换** | `AP ⇄ WDS 桥接` 在面板里选；写 overlay 的 `/etc/vs010/mode` + 清 stamp + 重跑首启配置。两套界面都注入，但**菜单只注册当前模式一套**，两页各带 mode 守卫（不符只显示提示，不渲染另一套）——不串界面 |
+| **WDS 主/客** | 左右滑动开关：左 `WDS-Z .241`、右 `WDS-K .242`；客户端可填主端 SSID / 密码 / BSSID 定向桥接 |
+| **WiFi 参数** | 5G / 2.4G 信道（`auto` = QSDK ACS）、SSID 信号剔除值 `-100…-30 dBm`、最低连接保持时间 `1–60 s`，两种模式都联动落 `db_rssi_thr` / `db_timeout` |
+| 🔴 DHCP | WDS 主 / 客两端都绝不能开 DHCP 服务端；面板、日志、下载页继续标红划线 |
+
+---
+
+## 十、一机型一包 · 双模式 · 界面即控制台（r27 起，每版强制）
+
+| 项 | 硬要求 |
+|---|---|
+| **产物** | `matrix` 只按 `device` 展开：**VS010 1 个 + 3000Q 1 个，共 2 个固件**。禁止再按 `mode` 编 WDS/AP 两份。固件名带 `YYYYMMDD-HHMM` 与 `-dual` |
+| **首启默认** | `default_mode`（默认 `wds`）只写 squashfs 里的 `/etc/vs010/mode`；切模式写 overlay，重启不丢，刷机不勾「保留配置」则回到默认 |
+| **模式切换闭环** | 写 mode → 清 `applied` stamp → 重跑首启配置 → **清 `/tmp|/var/luci-indexcache*` + `modulecache` → `uhttpd reload`**（菜单按 `cur_mode()` 重建）→ 前端 2 秒自动跳到 `/bridge/` 或 `/ap/`。缺任一步菜单都不会自动换 |
+| **不串界面** | 两套页面都注入；菜单只注册当前模式一套；设置面板带 mode 守卫；**整页** mode 不符时提示并自动跳到对应界面 |
+| **常用设置全在页面** | 模式 / WDS 主客 / 桥接目标 / AP 双频独立 SSID 密码 / 5G·2.4G 信道 / 频宽 / 功率 / WMM / MU-MIMO / 弱信号剔除值 / 最低连接值 / 管理 IP·掩码 / 设备名 / STP / NTP / 主题 / 自检·机器狗·Snooping·日志 |
+| **留给 LuCI** | 改 root 登录密码（开机脚本会归一为出厂值，页面改会打架）、固件升级、VLAN/静态路由、opkg 装包 —— 页面顶部常驻「🔧 LuCI 高级设置」入口 |
+| **安全红线** | 写入与维护端点只在 LuCI `admin` 树（sysauth）；字段白名单 + 后端二次校验；维护动作是**固定命令枚举、零参数**；`user.cfg` 600；**禁止 eval 写值**（SSID 含空格/括号不得被当命令执行）；不提供「开启 DHCP 服务端」按钮 |
+| **稳定红线** | 不新增常驻进程、不重建 radio、不 `wifi down`、不重启机器；一次 `wifi reload`；开机脚本重读 `user.cfg` 全字段 |
+
+---
+
+## 十一、界面布局与入口（r28 起，每版强制）
+
+| 项 | 硬要求 |
+|---|---|
+| **两页排序一致** | 前 3 块必须完全相同：`系统仪表盘 · GAUGE` → `常用设置控制台 · SETUP` → `网络与本机 · NETWORK`。之后才是网桥（WDS/守护·RF·诊断·加速）或 AP（射频·终端·弱信号·BDF·加速）各自的业务显示。自检用 h2 顺序硬断言 |
+| **GAUGE 置顶、只留仪表盘** | 三个环形仪表（CPU / 内存 / CPU 温度）+ 运行徽标 + **无线芯片温度**；详细数值微卡与 CPU/内存文字卡片**不显示**（DOM 隐藏/移除均可，但 JS 必须零空引用，删 DOM 就要 guard） |
+| **网口命名** | 按实际物理网口顺序显示 `内网LAN1` / `内网LAN2`…（CGI 输出 `lan` 字段；`br-lan` 是二层桥，不占号）。表头 `内网 LAN`，**不要再出现旧的「已插网线 / 连接端口」独立卡片** |
+| **速率显示** | `1000 → 1G`、`2500 → 2.5G`、`100 → 100M`、`10 → 10M`、读不到 `—`；必须标注 PHY 实测来源。`node` 真跑断言 `—\|10M\|100M\|1G\|2.5G` |
+| **NETWORK 整合** | 网络三卡在前、内网 LAN 表在后，两页同序；AP 页的 LAN 表也从独立区块移进 NETWORK |
+| **默认与跳转** | 刷完默认 **网桥**（`default_mode=wds` 写进 squashfs 的 `/etc/vs010/mode`）；新增 `www/index.html`，只输管理 IP 自动跳当前模式界面，CGI 不通 3 秒兜底 `/bridge/` |
+| **只读 / 写入分离** | 所有状态 CGI 保持公开只读（未登录能看设备全部状态）；写入与维护端点只在 LuCI `admin` 树（未登录 302 / 403），面板显示「保存与维护已锁定」并引导登录 |
+| **右上角开关** | 两页 header 右上角固定「⚙ 高级设置后台」→ `/cgi-bin/luci/`，窄屏回落流式；命名不许再写成 LuCI |
+| **日志中注明直达路径** | CHANGELOG、Release 发布日志、README、使用说明、根跳转页、SETUP 维护区、界面「查看日志 / 一键自检」输出首行、后端 `ACTS.log` 输出末尾，**全部写明** `http://<设备IP>/cgi-bin/luci/`（默认 `172.10.10.241`；`/cgi-bin/luci` 同效），并提示根路径 `/` 已改为状态页跳转、不再直达 LuCI。后端提示必须是固定串、零参数 |
+| **对比度** | 深色主题里，SETUP 白底卡片的 h3 / label / 滑块文字必须强制深色，避免被页面浅色规则盖成不可读 |
+
+---
+
+## 十二、深度核验红线（r28 起，每版强制）
+
+| 风险 | 硬护栏 |
+|---|---|
+| **LuCI 后台打不开** | 所有 `*.lua` 必须过 `tools/luacheck.py`（纯标准库词法：字符串内裸换行、未闭合、括号配对）。`jesc()` 这类把真实换行写进字符串字面量的错误，Lua 会直接 `unfinished string` → controller require 失败 → 整个后台 500、probe/save 全挂。禁止只靠 grep 断言 |
+| **根路径不跳转** | `vs010-luci-fix` 必须显式 `uci set uhttpd.main.index_page=index.html`。`luci-base` postinst 会把它设成 `cgi-bin/luci`，不覆盖则 `/www/index.html` 永不返回。`/cgi-bin/luci/` 是显式路径，不受影响 |
+| **无线起不来** | 本源码线 `.config` 是 `kmod-ath11k + mac80211 + wpad-wolfssl`，但无线脚本沿用 QSDK `qcawifi.sh` 约定（`hwmode=11axa` + `htmode=HT160` 表示 HE160，`vs010-wds-pair` 已验证）。**频宽白名单只放行 `HT160/HT80/HT40`**，禁止把 `HE160/HE80/VHT80` 暴露到界面；`apply_radio()` 对非法残留值必须跳过而不是写入 radio |
+| **LAN 名错标** | `vs010-links` 的 `lan` 字段按**物理口固定映射**（`eth0\|lan1 → 内网LAN1` …），不得按「第几个已插线的口」递增；`br-lan` 是二层桥，必须 `continue` 不进表格 |
+| **编译链断点** | `verify.sh` 每版跑：workflow 关键项、所有 `run:` 块 `bash -n`、`files.manifest` 每个文件存在、全部 `.lua`/`.sh`/CGI/内联 JS 语法检查 |
+| **网页打不开** | 演示站点用真实 HTTP + Chromium 断言：根跳转、两页首个 h2、3 环表、7 分组、右上角按钮、内网LAN1·1G、零 JS 错误；再注入未登录态断言「状态可见 + 保存禁用」 |
+
+---
+
+## 十三、界面文案与视觉基线（r29 起）
+
+- 端口块统称 **「网口状态 / 网口信息」**（`网口状态 · PORT STATUS`），不再叫「网口速率」；「链接速率」只是其中一列，必须保留；1000M 统一显示 `1G`。
+- 所有**状态栏、选项卡、徽章、按钮、输入项、滑块**统一 `border-radius:999px`（两端圆弧/胶囊）。大卡片与多行日志输出块保持原圆角，不做全页胶囊化。
+- 页面自身 CSS 必须用 `!important` 压住 `vs010-setup.js` 运行时注入的 `<style>`；`vs010-setup.js` 自身也要同步改，保证主题内单独打开设置页一致。
+- 每版自检必须断言：两页 6 列表头、状态栏存在、椭圆规则在位、旧标题不残留、setup.js 圆角数 ≥9、LuCI 菜单名统一。

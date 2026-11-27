@@ -23,6 +23,16 @@ fi
 LINKS=''
 for d in eth0 eth1 eth2 eth3 lan1 lan2 lan3 lan4 br-lan; do
   [ -d "/sys/class/net/$d" ] || continue
+  # ★ r28 核验修复：LAN 名对应【实际物理网口】，不是「第几个已插线的口」。
+  #   旧写法按保留顺序递增，只插第 3 个口会错显示成 内网LAN1。
+  #   br-lan 是二层桥，不是物理 LAN 口，直接不进表格。
+  case "$d" in
+    eth0|lan1) LAN_NAME='内网LAN1' ;;
+    eth1|lan2) LAN_NAME='内网LAN2' ;;
+    eth2|lan3) LAN_NAME='内网LAN3' ;;
+    eth3|lan4) LAN_NAME='内网LAN4' ;;
+    *) continue ;;
+  esac
   carrier=$(cat "/sys/class/net/$d/carrier" 2>/dev/null || echo 0)
   oper=$(cat "/sys/class/net/$d/operstate" 2>/dev/null || echo unknown)
   lk=$(ethtool "$d" 2>/dev/null | sed -n 's/.*Link detected: *//p' | head -1)
@@ -44,7 +54,7 @@ for d in eth0 eth1 eth2 eth3 lan1 lan2 lan3 lan4 br-lan; do
   fi
   [ "$d" = br-lan ] && { du='-'; sp=0; src='bridge'; note='二层桥，速率看成员口'; }
   [ -n "$LINKS" ] && LINKS="$LINKS,"
-  LINKS="$LINKS{\"if\":\"$(jesc "$d")\",\"speed\":$(num "$sp"),\"duplex\":\"$(jesc "$du")\",\"src\":\"$src\",\"note\":\"$(jesc "$note")\"}"
+  LINKS="$LINKS{\"lan\":\"$(jesc "$LAN_NAME")\",\"if\":\"$(jesc "$d")\",\"speed\":$(num "$sp"),\"duplex\":\"$(jesc "$du")\",\"src\":\"$src\",\"note\":\"$(jesc "$note")\"}"
 done
 
 ADMIN_IP=$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)

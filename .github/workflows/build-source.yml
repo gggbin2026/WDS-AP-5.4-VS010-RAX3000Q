@@ -1,4 +1,4 @@
-name: Build 5.4 source firmware (r25 · 3000Q / VS010 · WDS + AP)
+name: Build 5.4 source firmware (r29 · 3000Q / VS010 · 双模式单包)
 
 on:
   workflow_dispatch:
@@ -9,12 +9,12 @@ on:
         default: 'cmcc_rax3000q'
         type: choice
         options: [cmcc_rax3000q, cucc_vs010, all]
-      mode:
-        description: '模式'
+      default_mode:
+        description: '刷完首次开机的默认模式（之后在界面里随时切，不用重刷）'
         required: true
-        default: 'all'
+        default: 'wds'   # ★ r28：刷完默认网桥；输入 IP 自动跳 /bridge/
         type: choice
-        options: [all, wds, ap]
+        options: [wds, ap]
       vs010_experimental:
         description: '编译 VS010 源码线（已补 VS010 板级 BDF）'
         required: true
@@ -43,18 +43,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # ★ r27：一种机型只出一个包，AP / WDS 都在包里，界面里切换
         device: [cmcc_rax3000q, cucc_vs010]
-        mode: [wds, ap]
 
     steps:
     - name: Gate
       id: gate
       run: |
-        D='${{ github.event.inputs.device }}'; M='${{ github.event.inputs.mode }}'
+        D='${{ github.event.inputs.device }}'
         EXP='${{ github.event.inputs.vs010_experimental }}'
         GO=true
         [ "$D" = all ] || [ "$D" = '${{ matrix.device }}' ] || GO=false
-        [ "$M" = all ] || [ "$M" = '${{ matrix.mode }}' ] || GO=false
         case '${{ matrix.device }}' in
           cucc_vs010)
             if [ "$EXP" != true ]; then
@@ -63,7 +62,7 @@ jobs:
             fi ;;
         esac
         echo "go=$GO" >> $GITHUB_OUTPUT
-        echo "[gate] device=${{ matrix.device }} mode=${{ matrix.mode }} → $GO"
+        echo "[gate] device=${{ matrix.device }} default_mode=${{ github.event.inputs.default_mode }} → $GO"
 
     - name: Checkout
       if: steps.gate.outputs.go == 'true'
@@ -141,18 +140,20 @@ jobs:
         grep -n 'PKG_VERSION\|PKG_RELEASE' feeds/luci/themes/luci-theme-argon/Makefile
         echo "[argon] ✅ v2.4.3 / Lua .htm，与 21.02 LuCI 兼容（v2.4.4+ 是 ucode，不能装）"
 
-    - name: Assemble files (manifest + mode isolation)
+    - name: Assemble files (manifest + mode marker)
       if: steps.gate.outputs.go == 'true'
       run: |
         set -eu
-        MODE='${{ matrix.mode }}'; D='${{ matrix.device }}'
+        MODE='${{ github.event.inputs.default_mode }}'; D='${{ matrix.device }}'
+        case "$MODE" in wds|ap) ;; *) MODE=wds ;; esac
         rm -rf openwrt/files; mkdir -p openwrt/files/etc/rc.d
-        EX="sourcebuild/mode-exclude.$MODE.txt"
-        N=0; SKIP=0
+        # ★ r26：两套界面都注入。用户要求在界面里直接切换 AP / WDS 工作模式，
+        #   物理排除另一套页面会让切模式后打不开；改由「菜单只注册当前模式 +
+        #   页面 mode 守卫」做逻辑隔离，不串界面。
+        N=0
         while IFS= read -r p; do
           [ -n "$p" ] || continue
           case "$p" in \#*) continue ;; esac
-          if grep -Fxq "$p" "$EX" 2>/dev/null; then SKIP=$((SKIP+1)); continue; fi
           [ -f "sourcebuild/files/$p" ] || { echo "::error::清单里的文件不存在: $p"; exit 1; }
           mkdir -p "openwrt/files/$(dirname "$p")"
           install -m 644 "sourcebuild/files/$p" "openwrt/files/$p"
@@ -167,9 +168,9 @@ jobs:
           ln -sf "../init.d/$s" "openwrt/files/etc/rc.d/S${n}${s}"
         done
         printf '%s\n' "$MODE" > openwrt/files/etc/vs010/mode
-        printf 'Nwrt-QSDK12.2-5.4-%s-%s-%s\n' "$(date +%Y%m%d-%H%M)" "$D" "$MODE" \
+        printf 'Nwrt-QSDK12.2-5.4-%s-%s-dual\n' "$(date +%Y%m%d-%H%M)" "$D" \
           > openwrt/files/etc/firmware_build
-        echo "[files] $D/$MODE 注入 $N 文件，排除另一模式 $SKIP 项；常驻仅 vs010-tick"
+        echo "[files] $D/$MODE 注入 $N 文件（两套界面都在，菜单按当前模式注册一套）；常驻仅 vs010-tick"
 
     - name: Load custom configuration + DIY part 2
       if: steps.gate.outputs.go == 'true'
@@ -217,13 +218,13 @@ jobs:
         set -eu
         cd openwrt/bin/targets/ipq50xx/arm
         rm -rf packages
-        D='${{ matrix.device }}'; M='${{ matrix.mode }}'
+        D='${{ matrix.device }}'
         case "$D" in cucc_vs010) TAG=cucc_vs010 ;; *) TAG=cmcc_rax3000qy ;; esac
         STAMP=$(date +%Y%m%d-%H%M)
         mkdir -p "$GITHUB_WORKSPACE/out"
         for f in *nand-factory.ubi; do
           [ -f "$f" ] || continue
-          out="Nwrt-QSDK12.2-5.4-${STAMP}-ipq50xx-arm-${TAG}-${M}-squashfs-nand-factory.ubi"
+          out="Nwrt-QSDK12.2-5.4-${STAMP}-ipq50xx-arm-${TAG}-dual-squashfs-nand-factory.ubi"
           cp "$f" "$GITHUB_WORKSPACE/out/$out"
           echo "[name] $out"
         done
@@ -235,7 +236,7 @@ jobs:
       if: steps.organize.outputs.status == 'success'
       uses: actions/upload-artifact@v4
       with:
-        name: fw-5.4-${{ matrix.device }}-${{ matrix.mode }}-${{ github.run_id }}
+        name: fw-5.4-${{ matrix.device }}-dual-${{ github.run_id }}
         path: ${{ env.FIRMWARE }}
         retention-days: 90
 
@@ -243,8 +244,8 @@ jobs:
       if: steps.organize.outputs.status == 'success'
       uses: softprops/action-gh-release@v2
       with:
-        tag_name: fw-5.4-${{ github.run_id }}-${{ matrix.device }}-${{ matrix.mode }}
-        name: 5.4 ${{ matrix.device }} / ${{ matrix.mode }} · ${{ github.run_id }}
+        tag_name: fw-5.4-${{ github.run_id }}-${{ matrix.device }}-dual
+        name: 5.4 ${{ matrix.device }} · 双模式单包 · ${{ github.run_id }}
         body: |
           **源码编译线 · 5.4-QSDK 内核（kkstone/immortalwrt-ipq50xx @ openwrt-21.02）**
 
@@ -275,7 +276,9 @@ jobs:
           | 管理地址 | `172.10.10.241` / `255.255.252.0`（WDS 客户端 `.242`） |
           | 账号 | `root` / `admin`（SSH · 串口 ttyMSM0 · TTYD） |
           | 主题 | **Argon 2.4.3**（Lua 版，最后一个兼容 21.02 的 tag） |
-          | 模式界面 | 网桥 `/bridge/` 或 AP `/ap/`，互不混装 |
+          | 工作模式 | **一个固件内置 AP + WDS 双模式**：主题「状态 → 常用设置」或网桥/AP 页里滑块切换，菜单与界面自动跟着换，不用重刷、不用编两个包 |
+          | 模式界面 | 网桥 `/bridge/` 或 AP `/ap/`（菜单只注册当前模式一套，页面带 mode 守卫，不串界面） |
+           | 🔧 高级设置后台直达路径 | `http://<设备IP>/cgi-bin/luci/`（默认 `http://172.10.10.241/cgi-bin/luci/`；`/cgi-bin/luci` 同效）。也可点网桥/AP 页右上角「⚙ 高级设置后台」。界面「查看日志 / 一键自检」输出与后端日志末尾均注明此路径。**注意：r28 起根路径 `/` 是状态页自动跳转，不再直达 LuCI** |
           | 网络 | WAN+LAN 桥接 · STP 开 · IPv6/DHCP/防火墙全关 |
 
           **插件**：仅 LuCI + Argon 2.4.3 + TTYD + dropbear + ethtool/swconfig + 闭源加速无关项；新增 `portstat` / `wifi-check` / `luci-check` / `ntp-sync` / `dhcp-guard`(monitor) / **机器狗 `bridge-watchdog`（🔴 出厂停用）**。常驻守护仅 `vs010-tick` 一个进程。

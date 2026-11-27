@@ -22,6 +22,8 @@ function index()
     end
     entry({"admin", "status", "vs010_console"}, call("show_console"), _("状态控制台"), 57)
     entry({"admin", "status", "vs010_role"},    call("show_role"),    _("主题与 WDS 角色"), 58)
+    -- r26：「常用设置」节点由 vs010_setup.lua 自己注册（同一个 path 不能重复 entry），
+    --       同在 admin 树下继承 sysauth，未登录自动跳登录页；菜单顺序 59。
 end
 
 -- 第 17 次：主题切换 + WDS 主/客户端开关（GET 参数严格白名单，杜绝命令注入）

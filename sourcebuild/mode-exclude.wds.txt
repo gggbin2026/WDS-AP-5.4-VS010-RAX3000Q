@@ -1,5 +1,4 @@
-# 第 20 次：网桥(WDS)固件【不注入】的另一模式界面
-# 路径相对 files/，只删构建临时树，仓库源保持不变（两模式仍共用同一套源）。
-www/ap/index.html
-www/cgi-bin/apstatus
-usr/lib/lua/luci/view/vs010_ap.htm
+# r26 起【不再物理排除】另一模式界面：用户要求在界面里直接切换 AP / WDS 工作模式。
+# 隔离改为逻辑层：controller 按 /etc/vs010/mode 只注册本模式菜单 +
+# 两个页面各自带 mode 守卫（不符时只显示提示，不渲染另一套内容）。
+# 本文件仅作历史说明，workflow 不再读取它。旧条目（ap 页面）已全部注入。

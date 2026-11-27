@@ -1,0 +1,256 @@
+#!/bin/sh
+# r26：网桥 / AP 界面「常用设置」的唯一后台联动入口。
+# 🔴 只被 LuCI admin 树下的受 sysauth 保护端点调用（vs010_setup.lua），
+#    绝不注册裸 CGI；未登录时 dispatcher 直接 302 到登录页，配置写不进来。
+# 🔴 稳定性红线（STANDARDS.md）：绝不重建 radio / 绝不 wifi down / 绝不重启机器 /
+#    绝不新增常驻进程；配置写 /etc/vs010/user.cfg，开机脚本每次读它，重启不丢。
+# 🔴 WPA-PSK 按 OpenWrt 惯例明文存 UCI（hostapd 驱动需要），加密的是访问入口。
+PATH=${VS010_PATH:-/usr/sbin:/usr/bin:/sbin:/bin}; export PATH
+D=${VS010_DIR:-/etc/vs010}; CFG=$D/user.cfg
+mkdir -p "$D" 2>/dev/null || true
+log(){ logger -t vs010-apply-config "$*" 2>/dev/null || true; }
+jesc(){ printf '%s' "${1:-}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t'; }
+
+cfg_get(){
+  [ -f "$CFG" ] || { printf ''; return; }
+  sed -n "s/^$1=//p" "$CFG" 2>/dev/null | head -n 1
+}
+
+# 字段安全校验：中文/空格允许；禁引号/反斜杠/$/反引号/shell 元字符/控制符
+safe(){
+  v=${1:-}
+  case "$v" in
+    *'"'*|*'\'*|*'$'*|*'`'*|*';'*|*'|'*|*'&'*|*'<'*|*'>'*) return 1 ;;
+  esac
+  printf '%s' "$v" | LC_ALL=C grep -q '[[:cntrl:]]' && return 1
+  return 0
+}
+len_ok(){ n=$(printf '%s' "${1:-}" | wc -c); [ "$n" -le "$2" ] 2>/dev/null || return 1; [ "$n" -ge "${3:-0}" ] 2>/dev/null || return 1; return 0; }
+bssid_ok(){ printf '%s' "${1:-}" | grep -qE '^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$'; }
+num_ok(){
+  case "${1:-}" in ''|*[!0-9]*) return 1 ;; esac
+  [ "$1" -ge "$2" ] 2>/dev/null && [ "$1" -le "$3" ] 2>/dev/null
+}
+ch24_ok(){ v=${1:-}; [ "$v" = auto ] && return 0; num_ok "$v" 1 14; }
+ch5_ok(){
+  v=${1:-}; [ "$v" = auto ] && return 0
+  case "$v" in 36|40|44|48|52|56|60|64|100|104|108|112|116|120|124|128|132|136|140|144|149|153|157|161|165) return 0 ;; esac
+  return 1
+}
+rssi_ok(){ case "${1:-}" in -[0-9][0-9]|-[0-9][0-9][0-9]) n=${1#-}; num_ok "$n" 30 100; return $? ;; *) return 1 ;; esac; }
+
+MODE=$(cat "$D/mode" 2>/dev/null || cat /etc/firmware_mode 2>/dev/null || echo wds)
+case "$MODE" in ap) MODE=ap ;; *) MODE=wds ;; esac
+ROLE=$(cat "$D/role" 2>/dev/null || echo ap)
+case "$ROLE" in sta) ROLE=sta ;; *) ROLE=ap ;; esac
+
+get_json(){
+  ip=$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)
+  printf '{"ok":1,"mode":"%s","role":"%s","ip":"%s",' "$(jesc "$MODE")" "$(jesc "$ROLE")" "$(jesc "$ip")"
+  for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
+           wds_ssid wds_key peer_ssid peer_key peer_bssid \
+           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme; do
+    printf '"%s":"%s",' "$k" "$(jesc "$(cfg_get "$k")")"
+  done
+  APDEF=VS010-AP; case "$(cat /etc/firmware_model 2>/dev/null)" in *rax3000q*|*cmcc*) APDEF=RAX3000Q-AP ;; esac
+  printf '"defaults":{"ap_ssid":"%s","ap_key":"AP123456","wds_ssid":"WDS-Bridge-Z","wds_key":"WDS123456","ch5g":"auto","ch24g":"auto","htmode":"HT160","txpower":"auto","wmm":"1","mumimo":"1","weak_rssi":"-70","weak_timeout":"10","mgmt_ip":"%s","mgmt_mask":"255.255.252.0","stp":"1","ntp_interval":"300","theme":"argon"},' "$APDEF" "$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)"
+  printf '"auth":"luci-admin-sysauth","note":"配置经 LuCI 会话鉴权；WPA 明文存 UCI（驱动需要），重启从 user.cfg 联动重建"}\n'
+}
+
+apply_cfg(){
+  IN=${1:-}
+  [ -s "$IN" ] || { printf '{"ok":0,"msg":"缺字段文件"}\n'; exit 1; }
+  for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
+           wds_ssid wds_key peer_ssid peer_key peer_bssid \
+           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme role mode; do
+    eval "V_$k=''"
+  done
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in ''|'#'*) continue ;; esac
+    k=${line%%=*}; v=${line#*=}
+    case "$k" in
+      ap_ssid|ap_key|ap2_ssid|ap2_key|ap5_ssid|ap5_key|wds_ssid|wds_key|peer_ssid|peer_key|peer_bssid|\
+      ch5g|ch24g|htmode|txpower|wmm|mumimo|weak_rssi|weak_timeout|\
+      mgmt_ip|mgmt_mask|hostname|stp|ntp_server|ntp_interval|theme|role|mode) ;;
+      *) continue ;;
+    esac
+    safe "$v" || { printf '{"ok":0,"msg":"字段 %s 含非法字符"}\n' "$k"; exit 1; }
+    case "$k" in
+      ap_ssid)    len_ok "$v" 32 0 || { printf '{"ok":0,"msg":"AP SSID 最长 32 字节"}\n'; exit 1; }; V_ap_ssid=$v ;;
+      ap_key)     len_ok "$v" 63 0 || { printf '{"ok":0,"msg":"AP 密码须 8–63 字节"}\n'; exit 1; }
+                  [ -z "$v" ] || [ "$(printf '%s' "$v" | wc -c)" -ge 8 ] || { printf '{"ok":0,"msg":"AP 密码须 8–63 字节"}\n'; exit 1; }; V_ap_key=$v ;;
+      wds_ssid)   len_ok "$v" 32 0 || { printf '{"ok":0,"msg":"WDS 主端 SSID 最长 32 字节"}\n'; exit 1; }; V_wds_ssid=$v ;;
+      wds_key)    len_ok "$v" 63 0 || { printf '{"ok":0,"msg":"WDS 密码须 8–63 字节"}\n'; exit 1; }
+                  [ -z "$v" ] || [ "$(printf '%s' "$v" | wc -c)" -ge 8 ] || { printf '{"ok":0,"msg":"WDS 密码须 8–63 字节"}\n'; exit 1; }; V_wds_key=$v ;;
+      peer_ssid)  len_ok "$v" 32 0 || { printf '{"ok":0,"msg":"桥接目标 SSID 最长 32 字节"}\n'; exit 1; }; V_peer_ssid=$v ;;
+      peer_key)   len_ok "$v" 63 0 || { printf '{"ok":0,"msg":"桥接目标密码须 8–63 字节"}\n'; exit 1; }
+                  [ -z "$v" ] || [ "$(printf '%s' "$v" | wc -c)" -ge 8 ] || { printf '{"ok":0,"msg":"桥接目标密码须 8–63 字节"}\n'; exit 1; }; V_peer_key=$v ;;
+      peer_bssid) [ -z "$v" ] || bssid_ok "$v" || { printf '{"ok":0,"msg":"主端 BSSID 须为 aa:bb:cc:dd:ee:ff"}\n'; exit 1; }; V_peer_bssid=$v ;;
+      ch5g)       [ -z "$v" ] || ch5_ok "$v" || { printf '{"ok":0,"msg":"5G 信道须 auto 或 36/40/…/165"}\n'; exit 1; }; V_ch5g=$v ;;
+      ch24g)      [ -z "$v" ] || ch24_ok "$v" || { printf '{"ok":0,"msg":"2.4G 信道须 auto 或 1–14"}\n'; exit 1; }; V_ch24g=$v ;;
+      weak_rssi)  [ -z "$v" ] || rssi_ok "$v" || { printf '{"ok":0,"msg":"信号剔除值须 -100…‑30 dBm"}\n'; exit 1; }; V_weak_rssi=$v ;;
+      weak_timeout) [ -z "$v" ] || num_ok "$v" 1 60 || { printf '{"ok":0,"msg":"最低连接保持时间须 1–60 秒"}\n'; exit 1; }; V_weak_timeout=$v ;;
+      role)       case "$v" in ''|ap|sta) V_role=$v ;; *) printf '{"ok":0,"msg":"角色只能是 ap/sta"}\n'; exit 1 ;; esac ;;
+      mode)       case "$v" in ''|wds|ap) V_mode=$v ;; *) printf '{"ok":0,"msg":"工作模式只能是 wds/ap"}\n'; exit 1 ;; esac ;;
+      ap2_ssid|ap5_ssid) len_ok "$v" 32 0 || { printf '{"ok":0,"msg":"%s 最长 32 字节"}\n' "$k"; exit 1; }
+                  case "$k" in ap2_ssid) V_ap2_ssid=$v ;; *) V_ap5_ssid=$v ;; esac ;;
+      ap2_key|ap5_key)  len_ok "$v" 63 0 || { printf '{"ok":0,"msg":"%s 须 8–63 字节"}\n' "$k"; exit 1; }
+                  [ -z "$v" ] || [ "$(printf '%s' "$v" | wc -c)" -ge 8 ] || { printf '{"ok":0,"msg":"%s 须 8–63 字节"}\n' "$k"; exit 1; }
+                  case "$k" in ap2_key) V_ap2_key=$v ;; *) V_ap5_key=$v ;; esac ;;
+      # ★ r28：只放行该源码线已验证的 QSDK qcawifi.sh 约定值。HE160/HE80/VHT80
+      #   是 mac80211 标准写法，但本线用 11axa + HT160 表示 HE160；写 HE160 会挂 5G。
+      htmode)     case "$v" in ''|HT160|HT80|HT40) V_htmode=$v ;; *) printf '{"ok":0,"msg":"频宽只支持 HT160/HT80/HT40（QSDK 约定；HE160 请用 HT160）"}\n'; exit 1 ;; esac ;;
+      txpower)    [ -z "$v" ] || [ "$v" = auto ] || num_ok "$v" 1 30 || { printf '{"ok":0,"msg":"发射功率须 auto 或 1–30 dBm"}\n'; exit 1; }; V_txpower=$v ;;
+      wmm|mumimo|stp) case "$v" in ''|0|1) ;; *) printf '{"ok":0,"msg":"%s 只能是 0/1"}\n' "$k"; exit 1 ;; esac
+                  case "$k" in wmm) V_wmm=$v ;; mumimo) V_mumimo=$v ;; *) V_stp=$v ;; esac ;;
+      mgmt_ip)    [ -z "$v" ] || printf '%s' "$v" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || { printf '{"ok":0,"msg":"管理 IP 格式不对"}\n'; exit 1; }; V_mgmt_ip=$v ;;
+      mgmt_mask)  [ -z "$v" ] || printf '%s' "$v" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || { printf '{"ok":0,"msg":"子网掩码格式不对"}\n'; exit 1; }; V_mgmt_mask=$v ;;
+      hostname)   len_ok "$v" 32 0 || { printf '{"ok":0,"msg":"设备名最长 32 字节"}\n'; exit 1; }
+                  case "$v" in *[!A-Za-z0-9_-]*) printf '{"ok":0,"msg":"设备名只允许字母数字-_"}\n'; exit 1 ;; esac; V_hostname=$v ;;
+      ntp_server) len_ok "$v" 128 0 || { printf '{"ok":0,"msg":"NTP 服务器过长"}\n'; exit 1; }; V_ntp_server=$v ;;
+      ntp_interval) [ -z "$v" ] || num_ok "$v" 60 3600 || { printf '{"ok":0,"msg":"NTP 间隔须 60–3600 秒"}\n'; exit 1; }; V_ntp_interval=$v ;;
+      theme)      case "$v" in ''|argon|argon243) V_theme=$v ;; *) printf '{"ok":0,"msg":"主题只能是 argon / argon243"}\n'; exit 1 ;; esac ;;
+    esac
+  done < "$IN"
+  rm -f "$IN" 2>/dev/null || true
+
+  # ── ① 原子写持久化配置（开机脚本读它，重启不丢）──
+  T=$CFG.tmp
+  : > "$T" 2>/dev/null || { printf '{"ok":0,"msg":"overlay 不可写，无法保存"}\n'; exit 1; }
+  chmod 600 "$T" 2>/dev/null || true
+  for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
+           wds_ssid wds_key peer_ssid peer_key peer_bssid \
+           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme; do
+    eval "v=\$V_$k"
+    [ -z "$v" ] && v=$(cfg_get "$k")   # ★ 空值 = 保持原值，避免只改一项时把其它清空
+    printf '%s=%s\n' "$k" "$v" >> "$T"
+  done
+  mv -f "$T" "$CFG" 2>/dev/null || { printf '{"ok":0,"msg":"保存失败"}\n'; exit 1; }
+  # 弱信号两份存量脚本读的文件，同步写（不在 user.cfg 里重复存）
+  [ -n "$V_weak_rssi" ]    && printf '%s\n' "$V_weak_rssi"    > "$D/weak.rssi" 2>/dev/null || true
+  [ -n "$V_weak_timeout" ] && printf '%s\n' "$V_weak_timeout" > "$D/weak.timeout" 2>/dev/null || true
+  log "user.cfg 已更新（mode=$MODE role=$ROLE ch5g=$V_ch5g ch24g=$V_ch24g weak=$V_weak_rssi/$V_weak_timeout）"
+
+  MODE_SWITCHED=0
+  # ── ② 工作模式切换：写 overlay 的 mode + 清 stamp + 重跑首启配置（不重启机器）──
+  if [ -n "$V_mode" ] && [ "$V_mode" != "$MODE" ]; then
+    printf '%s\n' "$V_mode" > "$D/mode" 2>/dev/null || { printf '{"ok":0,"msg":"模式文件不可写"}\n'; exit 1; }
+    rm -f "$D/applied" "$D/wds.applied" "$D/wds.pending" 2>/dev/null || true
+    [ -x /etc/init.d/vs010-mode ] && sh /etc/init.d/vs010-mode start >/dev/null 2>&1 || true
+    # ★ r27：菜单按 /etc/vs010/mode 注册，LuCI 会缓存 index → 必须清缓存 + reload uhttpd，
+    #   否则切完模式主题菜单还是旧的那套（页面靠 mode 守卫能对，但菜单不会自动换）。
+    rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
+           /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
+    [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd reload >/dev/null 2>&1 || true
+    MODE=$V_mode; MODE_SWITCHED=1
+    log "工作模式切换 → $MODE（scrub+apply 重跑，一次 wifi reload）"
+  fi
+
+  ROLE_CHANGED=0
+  # ── ③ 角色切换（复用已验证的 vs010-role：set-role + IP + DHCP 兜底）──
+  if [ "$MODE" = wds ] && [ -n "$V_role" ] && [ "$V_role" != "$ROLE" ]; then
+    case "$V_role" in
+      ap)  /usr/sbin/vs010-role master >/dev/null 2>&1 || true ;;
+      sta) /usr/sbin/vs010-role client >/dev/null 2>&1 || true ;;
+    esac
+    ROLE=$V_role; ROLE_CHANGED=1
+    log "角色切换 → $ROLE（主 .241 / 客 .242）"
+  fi
+
+  # ── ④ 无线联动：只改既有 iface，绝不重建 radio / 绝不 wifi down ──
+  if [ "$ROLE_CHANGED" = 1 ] && [ "$MODE" = wds ]; then
+    :   # vs010-role → wds-pair set-role → apply() 已 converge + reload 一次
+  elif [ "$MODE" = wds ]; then
+    /usr/sbin/vs010-wds-pair converge >/dev/null 2>&1 || true
+    [ -x /sbin/wifi ] && /sbin/wifi reload >/dev/null 2>&1 || true
+  elif [ "$MODE_SWITCHED" = 0 ]; then
+    # AP 模式：按 radio 分组，每个 radio 只留一个 enabled VAP（与 set_ap_ssid 同口径）
+    AS=$(cfg_get ap_ssid); AK=$(cfg_get ap_key)
+    [ -n "$AS" ] || AS=$(cat "$D/ap.ssid" 2>/dev/null || echo VS010-AP)
+    [ -n "$AK" ] || AK=AP123456
+    W=$(cat "$D/weak.rssi" 2>/dev/null || echo -70)
+    T=$(cat "$D/weak.timeout" 2>/dev/null || echo 10)
+    seen=''
+    for sec in $(uci show wireless 2>/dev/null \
+                 | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+      [ -n "$sec" ] || continue
+      dev=$(uci -q get "wireless.$sec.device" 2>/dev/null || echo '')
+      case " $seen " in
+        *" $dev "*) uci -q set "wireless.$sec.disabled=1"; continue ;;
+      esac
+      seen="$seen $dev"
+      uci -q set "wireless.$sec.ssid=$AS"
+      uci -q set "wireless.$sec.encryption=psk2+ccmp"
+      uci -q set "wireless.$sec.key=$AK"
+      uci -q set "wireless.$sec.network=lan"
+      uci -q set "wireless.$sec.db_rssi_thr=$W"
+      uci -q set "wireless.$sec.db_timeout=$T"
+      uci -q set "wireless.$sec.disabled=0"
+    done
+    uci -q commit wireless 2>/dev/null || true
+    printf '%s\n' "$AS" > "$D/ap.ssid" 2>/dev/null || true
+    # ★ 信道内联应用（不重跑整个 vs010-mode，避免 rc.common 二次分派）
+    C5=$(cfg_get ch5g); [ -n "$C5" ] || C5=auto
+    C2=$(cfg_get ch24g); [ -n "$C2" ] || C2=auto
+    for x in $(uci show wireless 2>/dev/null \
+              | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+      hw=$(uci -q get "wireless.$x.hwmode" 2>/dev/null | tr 'A-Z' 'a-z')
+      case "$hw" in
+        *axa*|*ac*|*a) uci -q set "wireless.$x.channel=$C5" ;;
+        *)              uci -q set "wireless.$x.channel=$C2" ;;
+      esac
+    done
+    uci -q commit wireless 2>/dev/null || true
+    [ -x /sbin/wifi ] && /sbin/wifi reload >/dev/null 2>&1 || true
+    log "AP SSID 联动应用 $AS / 弱信号 $W dBm / $T 秒"
+  fi
+  # ── ⑤ 网络 / 系统 / 主题联动（同一入口，不新增常驻进程）──
+  NET_CHANGED=0
+  MI=$(cfg_get mgmt_ip); MM=$(cfg_get mgmt_mask)
+  if [ -n "$MI" ] && [ "$MI" != "$(uci -q get network.lan.ipaddr 2>/dev/null)" ]; then
+    uci -q set network.lan.proto=static; uci -q set network.lan.ipaddr="$MI"
+    [ -n "$MM" ] && uci -q set network.lan.netmask="$MM"
+    uci -q commit network; NET_CHANGED=1
+  elif [ -n "$MM" ] && [ "$MM" != "$(uci -q get network.lan.netmask 2>/dev/null)" ]; then
+    uci -q set network.lan.netmask="$MM"; uci -q commit network; NET_CHANGED=1
+  fi
+  SV=$(cfg_get stp); [ -n "$SV" ] && { uci -q set network.lan.stp="$SV"; uci -q commit network; } || true
+  HN=$(cfg_get hostname)
+  [ -n "$HN" ] && { printf '%s\n' "$HN" > /proc/sys/kernel/hostname 2>/dev/null || true
+                    uci -q set system.@system[0].hostname="$HN"; uci -q commit system; } || true
+  NS=$(cfg_get ntp_server); NI=$(cfg_get ntp_interval)
+  if [ -n "$NS" ]; then uci -q delete system.ntp.server 2>/dev/null
+    uci -q add_list "system.ntp.server=$NS"; uci -q commit system; fi
+  [ -n "$NI" ] && { uci -q set ntp-sync.main.interval="$NI"; uci -q commit ntp-sync; } || true
+  TH=$(cfg_get theme)
+  if [ -n "$TH" ]; then
+    case "$TH" in argon243) B=/luci-static/argon2 ;; *) B=/luci-static/argon ;; esac
+    uci -q set luci.main.mediaurlbase="$B"; uci -q commit luci
+    rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
+           /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
+    [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd reload >/dev/null 2>&1 || true
+  fi
+  [ "$NET_CHANGED" = 1 ] && {
+    ( sleep 3; /etc/init.d/network reload >/dev/null 2>&1 ) >/dev/null 2>&1 &
+  } || true
+
+  # 模式切换时 vs010-mode start 里不含 reload，这里补唯一一次
+  [ "$MODE_SWITCHED" = 1 ] && [ -x /sbin/wifi ] && /sbin/wifi reload >/dev/null 2>&1 || true
+
+  ip=$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)
+  msg='已保存并联动写入后台：user.cfg + wireless + network/system/luci，开机脚本重读，重启不丢失'
+  [ "$MODE_SWITCHED" = 1 ] && msg="$msg　🔴 已切到 $MODE 模式：菜单缓存已清、uhttpd 已 reload，2 秒后自动打开对应界面"
+  [ "$NET_CHANGED" = 1 ] && msg="$msg　🔴 管理地址已改，3 秒后网络重载，请用新地址重开页面"
+  [ "$ROLE_CHANGED" = 1 ] && msg="$msg　🔴 管理地址已切到 $ip，3 秒后网络重载，请改用新地址重新打开"
+  printf '{"ok":1,"msg":"%s","mode":"%s","role":"%s","ip":"%s","reload":1}\n' \
+    "$(jesc "$msg")" "$(jesc "$MODE")" "$(jesc "$ROLE")" "$(jesc "$ip")"
+}
+
+case "${1:-get}" in
+  get)      get_json ;;
+  apply)    apply_cfg "${2:-}" ;;
+  *)        printf '{"ok":0,"msg":"用法: vs010-apply-config get | apply <字段文件>"}\n'; exit 1 ;;
+esac

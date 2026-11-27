@@ -7,6 +7,48 @@ STAMP=/etc/vs010/applied
 BID=$(cat /etc/firmware_build 2>/dev/null || echo unknown)
 
 log(){ logger -t vs010-mode "$*" 2>/dev/null || true; }
+# ★ r26：界面「常用设置」持久化在 /etc/vs010/user.cfg；开机/切模式都重读，重启不丢
+cfg_get(){ [ -f /etc/vs010/user.cfg ] || { printf ''; return; }; \
+           sed -n "s/^$1=//p" /etc/vs010/user.cfg 2>/dev/null | head -n 1; }
+# 信道联动：5G/2.4G 分别按 hwmode 探测，不硬编码 wifi0/wifi1
+apply_radio(){
+  [ -f /etc/config/wireless ] || return 0
+  C5=$(cfg_get ch5g);       [ -n "$C5" ]  || C5=auto
+  C2=$(cfg_get ch24g);      [ -n "$C2" ]  || C2=auto
+  # HT160 是 QSDK qcawifi.sh 的 HE160 别名（vs010-wds-pair 同款，已验证），勿改 HE160
+  HT=$(cfg_get htmode);     [ -n "$HT" ]  || HT=HT160
+  TX=$(cfg_get txpower);    [ -n "$TX" ]  || TX=auto
+  WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
+  TOUT=$(cat /etc/vs010/weak.timeout 2>/dev/null || echo 10)
+  WMM=$(cfg_get wmm);       [ -n "$WMM" ] || WMM=1
+  MU=$(cfg_get mumimo);     [ -n "$MU" ]  || MU=1
+  is5g(){ case "$(uci -q get "wireless.$1.hwmode" 2>/dev/null | tr 'A-Z' 'a-z')" in
+            *axa*|*ac*|*a) return 0 ;; *) return 1 ;; esac; }
+  for x in $(uci show wireless 2>/dev/null \
+            | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+    if is5g "$x"; then
+      uci -q set "wireless.$x.channel=$C5"
+      # ★ r28：只写 qcawifi.sh 认的值；旧配置残留 HE160 也跳过，绝不写非法 htmode
+      case "$HT" in HT160|HT80|HT40) uci -q set "wireless.$x.htmode=$HT" ;;
+                    *) log "跳过非法 htmode=$HT（保留编译期默认）" ;; esac
+    else
+      uci -q set "wireless.$x.channel=$C2"
+    fi
+    [ "$TX" = auto ] || uci -q set "wireless.$x.txpower=$TX"
+  done
+  for sec in $(uci show wireless 2>/dev/null \
+              | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ "$(uci -q get "wireless.$sec.disabled" 2>/dev/null)" = 1 ] && continue
+    uci -q set "wireless.$sec.wmm=$WMM"
+    uci -q set "wireless.$sec.he_ulmumimo=$MU"
+    uci -q set "wireless.$sec.he_mubfer=$MU"
+    uci -q set "wireless.$sec.db_rssi_thr=$WEAK"
+    uci -q set "wireless.$sec.db_timeout=$TOUT"
+  done
+  uci -q commit wireless 2>/dev/null || true
+  log "r27 射频联动：5G=$C5 / 2.4G=$C2 / htmode=$HT / txpower=$TX / wmm=$WMM / mu=$MU / weak=$WEAK/$TOUT"
+}
+apply_channels(){ apply_radio; }   # 兼容 r26 称呼
 uci(){ command uci "$@" 2>/dev/null; }   # 缺 uci 时静默，不刷屏
 
 # ★★ 第 16 次：登录密码 = admin（用户最新拍板；此前两版实际写的是 password 占位 hash）★★
@@ -131,12 +173,17 @@ wifi_single_5g(){
     case "$hw" in *a|*ac*|*axa*) d=$x; break ;; esac
   done
   [ -n "$d" ] || d=wifi1
+  # ★ r26：不再写死 WDS-Bridge-Z —— 主端读 wds_ssid，客户端读 peer_ssid
+  WS=$(cfg_get wds_ssid); [ -n "$WS" ] || WS=WDS-Bridge-Z
+  if [ "$(cat /etc/vs010/role 2>/dev/null || echo ap)" = sta ]; then
+    PS=$(cfg_get peer_ssid); [ -n "$PS" ] && WS=$PS
+  fi
   keep=''; first=''
   for s in $(uci show wireless 2>/dev/null \
             | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
     [ "$(uci -q get "wireless.$s.device" 2>/dev/null)" = "$d" ] || continue
     [ -z "$first" ] && first=$s
-    [ "$(uci -q get "wireless.$s.ssid" 2>/dev/null)" = 'WDS-Bridge-Z' ] && keep=$s
+    [ "$(uci -q get "wireless.$s.ssid" 2>/dev/null)" = "$WS" ] && keep=$s
   done
   [ -z "$keep" ] && keep=$first
   [ -z "$keep" ] && return 0
@@ -147,7 +194,7 @@ wifi_single_5g(){
                        || uci -q set "wireless.$s.disabled=1"
   done
   uci -q commit wireless 2>/dev/null || true
-  log "5G 单 SSID 兜底：仅 wireless.$keep 广播，其余同 radio VAP disabled=1"
+  log "5G 单 SSID 兜底：仅 wireless.$keep 广播 $WS，其余同 radio VAP disabled=1"
 }
 ensure(){ # ensure <section-type> <section-name>
   uci -q get "$2" >/dev/null 2>&1 || uci -q set "$2=$1"
@@ -198,6 +245,12 @@ set_ap_ssid(){
     cmcc_rax3000q|*rax3000q*) SSID='RAX3000Q-AP' ;;
     *) SSID="$(printf '%s' "$MODEL" | tr 'a-z' 'A-Z')-AP" ;;
   esac
+  # ★ r26：界面改过就优先用用户值，否则出厂默认
+  US=$(cfg_get ap_ssid); [ -n "$US" ] && SSID=$US
+  UK=$(cfg_get ap_key);  [ -n "$UK" ] || UK=AP123456
+  S2=$(cfg_get ap2_ssid); K2=$(cfg_get ap2_key)
+  S5=$(cfg_get ap5_ssid); K5=$(cfg_get ap5_key)
+  WT=$(cat /etc/vs010/weak.timeout 2>/dev/null || echo 10)
   # ★ 第 13 次：按 radio 分组，每个 radio 只留【一个】enabled wifi-iface，
   #   其余 disabled=1（不删段，避免闭源 qca-wifi 的 VAP 索引错乱）。
   #   官方 QSDK 首启会给 5G 生成多个 VAP，之前全开就出现两个 SSID。
@@ -210,9 +263,15 @@ set_ap_ssid(){
       *" $dev "*) uci -q set "wireless.$sec.disabled=1"; continue ;;
     esac
     seen="$seen $dev"
-    uci -q set "wireless.$sec.ssid=$SSID"
+    # ★ r27：2.4G / 5G 可各用各的 SSID 与密码（界面分开填；留空则回落到统一值）
+    _ss=$SSID; _kk=$UK
+    case "$(uci -q get "wireless.$dev.hwmode" 2>/dev/null | tr 'A-Z' 'a-z')" in
+      *axa*|*ac*|*a) [ -n "$S5" ] && _ss=$S5; [ -n "$K5" ] && _kk=$K5 ;;
+      *)              [ -n "$S2" ] && _ss=$S2; [ -n "$K2" ] && _kk=$K2 ;;
+    esac
+    uci -q set "wireless.$sec.ssid=$_ss"
     uci -q set "wireless.$sec.encryption=psk2+ccmp"
-    uci -q set "wireless.$sec.key=AP123456"
+    uci -q set "wireless.$sec.key=$_kk"
     uci -q set "wireless.$sec.network=lan"
     uci -q set "wireless.$sec.disabled=0"
     # ★ 第 15 次：网桥/AP 都开 MU-MIMO + WMM（字段取自官方 lib/wifi/qcawifi.sh：
@@ -227,11 +286,11 @@ set_ap_ssid(){
     #   阈值可在设备改 /etc/vs010/weak.rssi（默认 -70 dBm），db_timeout 默认 10s
     WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
     uci -q set "wireless.$sec.db_rssi_thr=$WEAK"
-    uci -q set "wireless.$sec.db_timeout=10"
+    uci -q set "wireless.$sec.db_timeout=$WT"
   done
   uci -q commit wireless 2>/dev/null || true
   printf '%s\n' "$SSID" > /etc/vs010/ap.ssid 2>/dev/null || true
-  log "AP SSID 按机型设置 $SSID / AP123456"
+  log "AP SSID 联动设置 $SSID（用户密码=${UK:+已设}）"
 }
 
 apply(){
@@ -307,6 +366,7 @@ apply(){
   # ★ AP 模式：SSID 按机型区分 / AP123456；WDS 模式保持 WDS-Bridge-Z（由 wds-pair 管）
   if [ "$MODE" = ap ]; then set_ap_ssid
   else rm -f /etc/vs010/ap.ssid 2>/dev/null || true; fi
+  apply_channels    # ★ r26：两种模式都应用界面设置的 5G / 2.4G 信道
 
   # ── ★ 关 IPv6（uci + sysctl + 停 odhcpd）─────────────────────────
   uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
@@ -376,8 +436,13 @@ apply(){
     log 'luci core 段已归一为 named main（防主题取 nil）'
   fi
   # 官方 90_luci-theme-argon 首启会设；这里再兜底一次，确保主题就是 Argon
-  [ "$(uci -q get luci.main.mediaurlbase 2>/dev/null)" = '/luci-static/argon' ] \
-    || uci -q set luci.main.mediaurlbase=/luci-static/argon
+  # ★ r27：尊重用户选的主题（S18 vs010-luci-fix 早已这么修，这里漏了）。
+  #   旧写法无条件打回 /luci-static/argon → 面板切到 Argon 2.4.3 后一开机就被覆盖。
+  cur_theme=$(uci -q get luci.main.mediaurlbase 2>/dev/null)
+  case "$cur_theme" in
+    /luci-static/argon|/luci-static/argon2) : ;;
+    *) uci -q set luci.main.mediaurlbase=/luci-static/argon ;;
+  esac
   [ -f /etc/config/argon ] || log '警告：/etc/config/argon 缺失，Argon 设置页可能异常'
   rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
          /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true

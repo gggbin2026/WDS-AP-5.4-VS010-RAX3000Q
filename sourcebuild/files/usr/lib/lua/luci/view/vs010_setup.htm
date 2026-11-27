@@ -1,0 +1,13 @@
+<%+header%>
+<h2 name="content">常用设置 · SSID / 密码 / WDS 主客 / 信道 / 弱信号 / 工作模式</h2>
+<div class="cbi-section-descr">
+  本页在 LuCI <b>admin</b> 树下，<b>必须登录才能保存</b>；从主题菜单进入时已经登录，可直接操作。
+  修改后一次性联动写入 <code>/etc/vs010/user.cfg</code> + <code>/etc/config/wireless</code>，开机脚本会读它，<b>重启不丢失</b>；
+  只做一次 <code>/sbin/wifi reload</code>，不重启机器、不重建 radio。
+</div>
+<div id="vs010-setup" data-mode="auto"></div>
+<div style="color:#b91c1c;text-decoration:underline;font-weight:700;margin:14px 0">
+  🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端：本机 WDS 与 AP 均已关闭，内网只允许上级一台 DHCP，否则整网地址会乱
+</div>
+<script src="/vs010-setup.js"></script>
+<%+footer%>

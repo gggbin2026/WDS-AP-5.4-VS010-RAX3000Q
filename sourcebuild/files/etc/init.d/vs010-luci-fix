@@ -56,6 +56,15 @@ luci_fix(){
     uci -q set uhttpd.main.lua_prefix='/cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua'
     uci -q commit uhttpd
   }
+  # ⑥ ★ r28 核验修复：luci-base postinst 会把 uhttpd.main.index_page 设成
+  #   'cgi-bin/luci'，那样访问 http://设备IP/ 直接进 LuCI，/www/index.html
+  #   永远不会被返回 →「只输 IP 自动跳网桥/AP 界面」根本不生效。
+  #   显式指回静态 index.html；/cgi-bin/luci/ 是显式路径，不受 index_page 影响。
+  [ "$(uci -q get uhttpd.main.index_page 2>/dev/null)" = index.html ] || {
+    uci -q set uhttpd.main.index_page=index.html
+    uci -q commit uhttpd
+    log '根路径 index_page 已指向 /www/index.html（LuCI 仍走 /cgi-bin/luci/）'
+  }
 }
 start(){ luci_fix; }
 boot(){ luci_fix; }

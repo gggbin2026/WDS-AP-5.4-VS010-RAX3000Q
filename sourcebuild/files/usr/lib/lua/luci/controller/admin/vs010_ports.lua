@@ -1,10 +1,10 @@
--- VS010 / RAX3000Q 5.4.213 融合固件：在 Argon 主题里加「网口速率」页。
+-- VS010 / RAX3000Q 5.4.213 融合固件：在 Argon 主题里加「网口状态」页。
 -- 只读，不写配置、不碰驱动。官方 netdev 不上报速率时由 portstat 去交换芯片
 -- 读 PHY 实测值；本页只是把结果读出来显示，绝不假装 1000M。
 module("luci.controller.admin.vs010_ports", package.seeall)
 
 function index()
-    entry({"admin", "status", "vs010_ports"}, call("show"), _("已插网线速率"), 90)
+    entry({"admin", "status", "vs010_ports"}, call("show"), _("网口状态"), 90)
 end
 
 function show()
