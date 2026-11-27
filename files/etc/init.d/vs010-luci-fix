@@ -25,9 +25,16 @@ luci_fix(){
     uci -q set luci.main.resourcebase=/luci-static/resources
     log 'luci core 段已归一为 named main'
   fi
-  # ② Argon 主题（官方 90_luci-theme-argon 的 uci batch 也设，这里兜底）
-  [ "$(uci -q get luci.main.mediaurlbase 2>/dev/null)" = '/luci-static/argon' ] \
-    || uci -q set luci.main.mediaurlbase=/luci-static/argon
+  # ② 第 17 次：注册两个主题，但【绝不覆盖用户选中的那个】
+  #   上一版这里无条件把 mediaurlbase 改回 /luci-static/argon，用户切到新版
+  #   argon2 后一开机就被打回去了 —— 已修：只在「空 / 指向不存在的目录」时兜底。
+  uci -q set luci.themes.Argon=/luci-static/argon
+  uci -q set luci.themes.Argon_243=/luci-static/argon2
+  cur=$(uci -q get luci.main.mediaurlbase 2>/dev/null)
+  case "$cur" in
+    /luci-static/argon|/luci-static/argon2) : ;;   # 用户选中的两个 Argon，尊重
+    *) uci -q set luci.main.mediaurlbase=/luci-static/argon ;;   # bootstrap/空/异常 → 回官方 Argon
+  esac
   uci -q commit luci
 
   # ③ 清 indexcache：官方 uci-defaults 只清 /var，dispatcher 实际用 /tmp

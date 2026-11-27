@@ -1,0 +1,38 @@
+<%+header%>
+<h2 name="content">主题与 WDS 角色</h2>
+<div class="cbi-section-descr">两种机型（VS010 / RAX3000Q）、两种模式（WDS / AP）通用。切换后按提示用新地址重新打开页面。</div>
+
+<% if out and out ~= "" then %>
+<div class="cbi-section-descr"><pre style="white-space:pre-wrap;word-break:break-all;background:#f0fdf4;color:#166534;padding:12px;border-radius:6px;font-size:13px"><%= out %></pre></div>
+<% end %>
+
+<div class="cbi-section"><h3>当前状态</h3>
+<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;line-height:1.6;background:#f7f7f7;padding:12px;border-radius:6px"><%= st %></pre>
+<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;line-height:1.6;background:#f7f7f7;padding:12px;border-radius:6px"><%= th %></pre></div>
+
+<div class="cbi-section"><h3>WDS 主 / 客户端（仅 WDS 固件生效）</h3>
+<div class="cbi-section-descr">
+  <b>主 WDS-Z → <code>172.10.10.241</code></b>　｜　<b>客户端 WDS-K → <code>172.10.10.242</code></b>　掩码均 <code>255.255.252.0</code>。<br>
+  两台设备各自进系统选一次即可，不用重刷、不用串口。AP 模式恒为 .241，不受此开关影响。
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
+  <a class="cbi-button cbi-button-apply" href="?act=master">设为本机 = WDS 主（.241）</a>
+  <a class="cbi-button cbi-button-apply" href="?act=client">设为本机 = WDS 客户端（.242）</a>
+  <a class="cbi-button" href="?act=auto">恢复自动（按 MAC 收敛）</a>
+</div>
+<div style="color:#b91c1c;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端：本机 WDS 与 AP 均已关闭，内网只允许上级一台 DHCP，否则整网地址会乱</div>
+</div>
+
+<div class="cbi-section"><h3>Argon 主题</h3>
+<div class="cbi-section-descr">
+  默认仍是官方 <b>1.7.2</b>；<b>v2.4.3</b> 是上游最后一个 Lua 架构兼容版，已作为独立目录注入、零覆盖官方文件。切换不重启、不动网络与无线，随时可切回。
+</div>
+<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
+  <a class="cbi-button cbi-button-apply" href="?act=argon243">切到 Argon v2.4.3（新版）</a>
+  <a class="cbi-button" href="?act=argon">切回官方 1.7.2</a>
+</div>
+<div class="cbi-section-descr">也可在「系统 → 语言与界面 → 设计」里选 <code>Argon_243</code>；命令行 <code>vs010-theme status|argon243|argon</code>。</div>
+</div>
+
+<div class="cbi-section-descr"><a href="/cgi-bin/luci/admin/status/vs010_bridge">网桥状态</a> ｜ <a href="/cgi-bin/luci/admin/status/vs010_ap">AP 状态</a> ｜ <a href="/cgi-bin/luci/admin/status/vs010_ports">网口速率</a> ｜ <a href="/cgi-bin/luci/admin/status/vs010_console">WDS / 机器狗 / Snooping</a></div>
+<%+footer%>

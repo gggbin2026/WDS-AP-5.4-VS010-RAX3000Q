@@ -75,11 +75,13 @@ converge(){
   d=$(dev5g)
   role=$(cat "$ROLE" 2>/dev/null || echo ap)
   [ "$role" = sta ] || role=ap
-  # ★ 5G 桥接走 HE160：QSDK qcawifi.sh 对 `11axa + HT160` 转 11AHE160，
-  #   channel 36 是 160MHz 合法主信道。
+  # ★ 第 16 次：无线信道【自动】。官方 qcawifi.sh:1846 明确写着
+  #   `[ auto = "$channel" ] && channel=0`，即 auto 是 QSDK 原生合法值，
+  #   转 0 后由 ACS 自动选道；后面的 `[ $channel -eq 36 ]` 不会崩。
+  #   HE160 仍由 `11axa + HT160` → qcawifi.sh:2578 转 11AHE160，与自动选道不冲突。
   uci -q set "wireless.$d.hwmode=11axa"
   uci -q set "wireless.$d.htmode=HT160"
-  uci -q set "wireless.$d.channel=36"
+  uci -q set "wireless.$d.channel=auto"
   uci -q set "wireless.$d.disabled=0"
   # 备份一次（只供 off 参考，不整体覆盖）
   [ -f "$D/wireless.orig" ] || cp -f /etc/config/wireless "$D/wireless.orig" 2>/dev/null || true
@@ -113,6 +115,17 @@ converge(){
   uci -q set "wireless.$primary.encryption=psk2+ccmp"
   uci -q set "wireless.$primary.key=$WDS_KEY"
   uci -q set "wireless.$primary.disabled=0"
+  # ★ 第 15 次：网桥模式同样开 MU-MIMO + WMM（官方 qcawifi.sh 识别的字段）
+  uci -q set "wireless.$primary.wmm=1"
+  uci -q set "wireless.$primary.he_ulmumimo=1"
+  uci -q set "wireless.$primary.he_mubfer=1"
+  uci -q set "wireless.$primary.he_dlofdma=1"
+  uci -q set "wireless.$primary.he_ulofdma=1"
+  # ★ 第 16 次：网桥那也要有弱信号剔除 + 拒绝连接（与 AP 同口径）
+  #   字段来自官方 qcawifi.sh:2617/2620 的 iwpriv db_rssi_thr / db_timeout。
+  WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
+  uci -q set "wireless.$primary.db_rssi_thr=$WEAK"
+  uci -q set "wireless.$primary.db_timeout=10"
   uci -q delete "wireless.$primary.wds"        2>/dev/null || true
   uci -q delete "wireless.$primary.wds_bridge" 2>/dev/null || true
   if [ "$role" = ap ]; then

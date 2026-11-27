@@ -9,21 +9,22 @@ BID=$(cat /etc/firmware_build 2>/dev/null || echo unknown)
 log(){ logger -t vs010-mode "$*" 2>/dev/null || true; }
 uci(){ command uci "$@" 2>/dev/null; }   # 缺 uci 时静默，不刷屏
 
-# ★★ 第 13 次：root/admin 每次开机幂等归一（不受 applied stamp 限制）★★
+# ★★ 第 16 次：登录密码 = admin（用户最新拍板；此前两版实际写的是 password 占位 hash）★★
 #   官方 /etc/shadow 是 root::（空密码）。旧写法 `printf 'admin\nadmin\n' | passwd root`
-#   在 squashfs 只读底层 + 非 tty 下会静默失败，而旧 apply() 不管成败都写 stamp，
-#   之后每次开机 apply() 见 stamp 就 return → 密码永久没设上；LuCI 首登还会因空密码
-#   强制用户自己设一个，于是「登陆密码不是 admin」。
-#   改用固定 salt 的 MD5-crypt（openssl passwd -1 -salt VS010Z admin）直接写 overlay，
+#   在 squashfs 只读底层 + 非 tty 下静默失败，且旧 apply() 不管成败都写 stamp，
+#   之后每次开机见 stamp 就 return → 密码永久没设上；LuCI 首登还会强制自己设一个。
+#   🔴 更硬的坑：上一版 PW_HASH 是带 ... 的占位串，根本不是合法 MD5-crypt，
+#      写进 shadow 也验不过。现在换成 openssl passwd -1 -salt VS010Z admin 的真实值，
+#      由 verify.sh 每次自检用 openssl 反算校验，杜绝再写占位符。
 #   SSH / LuCI / 串口三处同读 /etc/shadow，一次修好。
-ADMIN_HASH='$1$VS010Z$UZ4qew78etSeRS5gXbjrR1'
+PW_HASH='$1$VS010Z$UZ4qew78etSeRS5gXbjrR1'
 fix_login(){
   SH=${VS010_SHADOW:-/etc/shadow}        # 仅 mock 时覆盖；生产恒为 /etc/shadow
   [ -r "$SH" ] || { log 'shadow 不可读，跳过'; return 0; }
   cur=$(sed -n 's/^root:\([^:]*\):.*/\1/p' "$SH" 2>/dev/null | head -n 1)
-  [ "$cur" = "$ADMIN_HASH" ] && return 0
+  [ "$cur" = "$PW_HASH" ] && return 0
   T=/tmp/.vs010-shadow.$$
-  awk -v h="$ADMIN_HASH" 'BEGIN{FS=OFS=":"} /^root:/{$2=h} {print}' "$SH" > "$T" 2>/dev/null \
+  awk -v h="$PW_HASH" 'BEGIN{FS=OFS=":"} /^root:/{$2=h} {print}' "$SH" > "$T" 2>/dev/null \
     || { rm -f "$T"; return 0; }
   # cat > 触发 overlay copy-up；失败再走同目录临时文件 + mv（rename 同样 copy-up）
   if ! cat "$T" > "$SH" 2>/dev/null; then
@@ -32,8 +33,121 @@ fix_login(){
   chmod 600 "$SH" 2>/dev/null || true
   rm -f "$T"
   now=$(sed -n 's/^root:\([^:]*\):.*/\1/p' "$SH" 2>/dev/null | head -n 1)
-  [ "$now" = "$ADMIN_HASH" ] && log 'root/admin 已写入 shadow（SSH/LuCI/串口同密）' \
+  [ "$now" = "$PW_HASH" ] && log 'root/admin 已写入 shadow（SSH/LuCI/串口同密）' \
     || log 'shadow 写入未生效（overlay 不可写？可串口 passwd root）'
+}
+
+# ★★ 第 15 次：IPv6 全关（每次开机，不受 stamp 限制）★★
+#   LuCI「接口 LAN → 高级设置 → 使用内置的 IPv6 管理」读的就是 network.lan.ipv6，
+#   旧版只在 apply() 里设一次，board.d 每次开机重新生成后又被打回 1。
+kill_ipv6(){
+  if uci -q get network.lan >/dev/null 2>&1; then
+    uci -q set network.lan.ipv6='0'
+    for o in ip6assign ip6prefix ip6class ip6hint ip6ifaceid ip6weight; do
+      uci -q delete "network.lan.$o" 2>/dev/null || true
+    done
+    uci -q set network.globals.ula_prefix='' 2>/dev/null || true
+    uci -q delete network.wan6  2>/dev/null || true
+    uci -q delete network.globals.ula_prefix 2>/dev/null || true
+    uci -q commit network 2>/dev/null || true
+  fi
+  uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+  uci -q set dhcp.lan.ra=off
+  uci -q set dhcp.lan.dhcpv6=off
+  uci -q set dhcp.lan.ndp=off
+  for o in ra_management ra_default ra_slaac dhcpv6_passthrough; do
+    uci -q delete "dhcp.lan.$o" 2>/dev/null || true
+  done
+  uci -q delete dhcp.wan6 2>/dev/null || true
+  uci -q commit dhcp 2>/dev/null || true
+  sysctl -p /etc/sysctl.d/99-vs010-no-ipv6.conf >/dev/null 2>&1 || true
+  # 所有已存在网卡逐个关 v6（sysctl 文件只覆盖 all/default）
+  for p in /proc/sys/net/ipv6/conf/*/disable_ipv6; do
+    [ -w "$p" ] && printf '1\n' > "$p" 2>/dev/null || true
+  done
+  /etc/init.d/odhcpd stop    2>/dev/null || true
+  /etc/init.d/odhcpd disable 2>/dev/null || true
+}
+
+# ★★ 第 15 次：本机 DHCP 服务端全关（网桥主/客户端/AP 都不发地址）★★
+#   🔴 两端都开 DHCP 会让内网分到不同网段/冲突地址，整网乱掉。
+kill_dhcp(){
+  uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+  uci -q set dhcp.lan.ignore='1'
+  uci -q set dhcp.lan.dhcpv6='off'
+  uci -q set dhcp.lan.ra='off'
+  uci -q set dhcp.lan.ndp='off'
+  uci -q delete dhcp.wan6 2>/dev/null || true
+  uci -q commit dhcp 2>/dev/null || true
+  /etc/init.d/dnsmasq stop    2>/dev/null || true
+  /etc/init.d/dnsmasq disable 2>/dev/null || true
+  /etc/init.d/odhcpd  stop    2>/dev/null || true
+  /etc/init.d/odhcpd  disable 2>/dev/null || true
+  log '[!!! DHCP !!!] 本机 DHCP 服务端已关闭：WDS 主/客户端、AP 都不发地址；内网只允许上级一台 DHCP，客户端那台也绝不能开'
+}
+
+# ★★ 第 15 次：防火墙彻底关（服务 + 自启 + 规则）★★
+#   纯二层桥不需要任何 iptables/nft 规则；构建期已删配置/控制器/S19 链接。
+kill_firewall(){
+  /etc/init.d/firewall stop    2>/dev/null || true
+  /etc/init.d/firewall disable 2>/dev/null || true
+  /etc/init.d/fw3       stop    2>/dev/null || true
+  # 清掉残留规则（有工具才执行，缺工具静默跳过）
+  if command -v iptables >/dev/null 2>&1; then
+    iptables -F 2>/dev/null || true; iptables -X 2>/dev/null || true
+    iptables -t nat -F 2>/dev/null || true; iptables -t nat -X 2>/dev/null || true
+  fi
+  if command -v ip6tables >/dev/null 2>&1; then
+    ip6tables -F 2>/dev/null || true; ip6tables -X 2>/dev/null || true
+  fi
+  if command -v nft >/dev/null 2>&1; then nft flush ruleset 2>/dev/null || true; fi
+}
+
+# ★★ 第 16 次：所有无线信道【自动】★★
+#   官方 board.d 每次开机可能重新生成固定 channel；这里统一写 auto。
+#   qcawifi.sh:1846 `[ auto = "$channel" ] && channel=0` → ACS 自动选道，合法。
+auto_channel(){
+  [ -f /etc/config/wireless ] || return 0
+  for x in $(uci show wireless 2>/dev/null \
+             | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+    [ -n "$x" ] && uci -q set "wireless.$x.channel=auto"
+  done
+  uci -q commit wireless 2>/dev/null || true
+  log '信道自动：全部 wifi-device channel=auto（ACS）'
+}
+
+# ★★ 第 15 次：5G 单 SSID 兜底（不依赖 /usr/sbin/vs010-wds-pair 是否存在）★★
+#   图里实机 5G 同时广播 Nwrt_5G + WDS-Bridge-Z，就是旧版「新增 wds_z」的行为。
+#   这里每次开机再收一次：5G 上只留 ssid=WDS-Bridge-Z 的那个，其余 disabled=1。
+wifi_single_5g(){
+  [ -f /etc/config/wireless ] || return 0
+  # 找 5G radio：channel 优先，其次 hwmode 结尾 a/acaxa
+  d=''
+  for x in $(uci show wireless 2>/dev/null \
+             | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
+    ch=$(uci -q get "wireless.$x.channel" 2>/dev/null)
+    hw=$(uci -q get "wireless.$x.hwmode" 2>/dev/null)
+    case "$ch" in 36|40|44|48|52|56|60|64|100|104|108|112|116|120|124|128|132|136|140|144|149|153|157|161|165) d=$x; break ;; esac
+    case "$hw" in *a|*ac*|*axa*) d=$x; break ;; esac
+  done
+  [ -n "$d" ] || d=wifi1
+  keep=''; first=''
+  for s in $(uci show wireless 2>/dev/null \
+            | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ "$(uci -q get "wireless.$s.device" 2>/dev/null)" = "$d" ] || continue
+    [ -z "$first" ] && first=$s
+    [ "$(uci -q get "wireless.$s.ssid" 2>/dev/null)" = 'WDS-Bridge-Z' ] && keep=$s
+  done
+  [ -z "$keep" ] && keep=$first
+  [ -z "$keep" ] && return 0
+  for s in $(uci show wireless 2>/dev/null \
+            | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ "$(uci -q get "wireless.$s.device" 2>/dev/null)" = "$d" ] || continue
+    [ "$s" = "$keep" ] && uci -q set "wireless.$s.disabled=0" \
+                       || uci -q set "wireless.$s.disabled=1"
+  done
+  uci -q commit wireless 2>/dev/null || true
+  log "5G 单 SSID 兜底：仅 wireless.$keep 广播，其余同 radio VAP disabled=1"
 }
 ensure(){ # ensure <section-type> <section-name>
   uci -q get "$2" >/dev/null 2>&1 || uci -q set "$2=$1"
@@ -55,23 +169,23 @@ scrub(){
     uci -q delete dhcp.wan6     2>/dev/null || true
     uci -q set network.lan.ifname='eth0 eth1'
     uci -q set network.lan.type='bridge'
-    uci -q set network.lan.ipv6='0'
-    uci -q set network.globals.ula_prefix='' 2>/dev/null || true
     uci -q set network.@switch[0].enable_vlan='0' 2>/dev/null || true
     uci -q commit network 2>/dev/null || true
   fi
-  sysctl -p /etc/sysctl.d/99-vs010-no-ipv6.conf >/dev/null 2>&1 || true
-  /etc/init.d/odhcpd   stop 2>/dev/null || true
-  /etc/init.d/odhcpd   disable 2>/dev/null || true
-  /etc/init.d/firewall stop 2>/dev/null || true
-  /etc/init.d/firewall disable 2>/dev/null || true
-  # ★ 密码与无线收敛：每次开机都跑，绝不受 applied stamp 影响
+  # ★ 第 15 次：四项全关每次开机都跑，绝不受 applied stamp 影响
+  kill_ipv6
+  kill_dhcp
+  kill_firewall
   fix_login
-  # WDS 模式：wds-pair 的 loop 要 sleep 35 才 apply，这里先收敛一次，
-  # 保证从开机起 5G 就只有一个 SSID（不出现「原厂 + WDS-Bridge-Z」两个）。
-  if [ "$MODE_S" = wds ] && [ -x /usr/sbin/vs010-wds-pair ] \
-     && [ -f /etc/config/wireless ]; then
-    /usr/sbin/vs010-wds-pair converge >/dev/null 2>&1 || true
+  auto_channel
+  # ★ 5G 双保险：先内联兜底（不依赖外部脚本），再让 wds-pair 收敛一次；
+  #   wireless 若晚生成，15 秒后重试，保证开局就只有 1 个 SSID。
+  if [ "$MODE_S" = wds ]; then
+    wifi_single_5g
+    if [ -x /usr/sbin/vs010-wds-pair ]; then
+      /usr/sbin/vs010-wds-pair converge >/dev/null 2>&1 \
+        || ( sleep 15; /usr/sbin/vs010-wds-pair converge ) >/dev/null 2>&1 &
+    fi
   fi
   [ -x /usr/sbin/vs010-host ] && /usr/sbin/vs010-host >/dev/null 2>&1 || true
 }
@@ -101,6 +215,19 @@ set_ap_ssid(){
     uci -q set "wireless.$sec.key=AP123456"
     uci -q set "wireless.$sec.network=lan"
     uci -q set "wireless.$sec.disabled=0"
+    # ★ 第 15 次：网桥/AP 都开 MU-MIMO + WMM（字段取自官方 lib/wifi/qcawifi.sh：
+    #   wmm=config_get_bool wmm "$vif"、he_ulmumimo / he_mubfer / he_dlofdma /
+    #   he_ulofdma 均为 config_get "$vif"，全部走 iwpriv 下发，不是我编的名字）
+    uci -q set "wireless.$sec.wmm=1"
+    uci -q set "wireless.$sec.he_ulmumimo=1"
+    uci -q set "wireless.$sec.he_mubfer=1"
+    uci -q set "wireless.$sec.he_dlofdma=1"
+    uci -q set "wireless.$sec.he_ulofdma=1"
+    # ★ AP 弱信号：剔除 + 拒绝连接（QSDK 私有 iwpriv db_rssi_thr / db_timeout）
+    #   阈值可在设备改 /etc/vs010/weak.rssi（默认 -70 dBm），db_timeout 默认 10s
+    WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
+    uci -q set "wireless.$sec.db_rssi_thr=$WEAK"
+    uci -q set "wireless.$sec.db_timeout=10"
   done
   uci -q commit wireless 2>/dev/null || true
   printf '%s\n' "$SSID" > /etc/vs010/ap.ssid 2>/dev/null || true
@@ -108,7 +235,7 @@ set_ap_ssid(){
 }
 
 apply(){
-  fix_login        # ★ 放在 stamp 检查之前：即使本次 apply 直接 return 也保证 admin
+  fix_login        # ★ 放在 stamp 检查之前：即使本次 apply 直接 return 也保证 password
   [ "$(cat "$STAMP" 2>/dev/null)" = "$BID" ] && return 0
   MODE=$(cat /etc/vs010/mode 2>/dev/null || echo wds)
   case "$MODE" in wds|ap) ;; *) MODE=wds ;; esac
@@ -117,7 +244,17 @@ apply(){
   if uci -q get network.lan >/dev/null 2>&1; then
     ensure interface network.lan
     [ -n "$(uci -q get network.lan.ipaddr 2>/dev/null)" ] || setv network.lan proto static
-    IP=$(cat /etc/vs010/ipaddr 2>/dev/null || echo 172.10.10.241)
+    # ★ 第 17 次：WDS 主 .241 / 客户端 .242，AP 模式恒 .241
+    #   /etc/vs010/ipaddr 由 vs010-role 写入；AP 模式忽略它，避免从客户端
+    #   切回 AP 后地址还停在 .242。
+    if [ "$MODE_S" = ap ]; then
+      IP=172.10.10.241
+    else
+      R=$(cat /etc/vs010/role 2>/dev/null || echo ap)
+      [ "$R" = sta ] && IP=172.10.10.242 || IP=172.10.10.241
+      F=$(cat /etc/vs010/ipaddr 2>/dev/null || echo '')
+      case "$F" in 172.10.10.241|172.10.10.242) IP=$F ;; esac
+    fi
     NM=$(cat /etc/vs010/netmask 2>/dev/null || echo 255.255.252.0)
     setv network.lan ipaddr "$IP"
     setv network.lan netmask "$NM"
@@ -174,7 +311,7 @@ apply(){
     [ -x "/etc/init.d/$x" ] && /etc/init.d/$x disable 2>/dev/null || true
   done
 
-  # ── ★ root/admin 已由 fix_login() 在 scrub() 里每次开机幂等归一（第 13 次）──
+  # ── ★ root/password 已由 fix_login() 在 scrub() 里每次开机幂等归一（第 15 次）──
   #   不再放在 apply() 里：apply 受 applied stamp 限制，且 passwd 在只读底层会失败。
   # dropbear 不绑 Interface（绑了会在 BOOT 阶段不建实例）
   uci -q delete dropbear.@dropbear[0].Interface 2>/dev/null || true

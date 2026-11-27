@@ -4,15 +4,21 @@
 # ART 不进固件，每台机器刷完自动读自己的 ART 分区。
 set -eu
 cd "$(dirname "$0")/.."
-CAP=''; DEV=cucc_vs010; MODE=wds; DRY=0
+CAP=''; INS=''; DEV=cucc_vs010; MODE=wds; DRY=0
 for a in "$@"; do case "$a" in
-  --capture=*) CAP=${a#--capture=} ;;
-  --device=*)  DEV=${a#--device=}  ;;
-  --mode=*)    MODE=${a#--mode=}   ;;
-  --dryrun)    DRY=1 ;;
+  --capture=*)   CAP=${a#--capture=} ;;
+  --installed=*) INS=${a#--installed=} ;;
+  --device=*)    DEV=${a#--device=}  ;;
+  --mode=*)      MODE=${a#--mode=}   ;;
+  --dryrun)      DRY=1 ;;
   *) echo "::error::未知参数 $a"; exit 1 ;;
 esac; done
-[ -n "$CAP" ] && [ -r "$CAP" ] || { echo '::error::缺 --capture=<prune-real.txt>'; exit 1; }
+# 第 12 次：设备无 whiteout 时直接用 opkg list-installed 作双机型共用基线
+if [ -n "$INS" ]; then
+  [ "$DRY" = 1 ] && exec sh tools/apply-installed-baseline.sh --dryrun \
+                 || exec sh tools/apply-installed-baseline.sh --device="$DEV" --mode="$MODE"
+fi
+[ -n "$CAP" ] && [ -r "$CAP" ] || { echo '::error::缺 --capture=<prune-real.txt> 或 --installed=<list>'; exit 1; }
 
 echo '── VS010 清单回灌 ──'
 echo '  ART 分区不进固件：factory.bin 只有 layout/kernel/rootfs 三个 UBI 卷，'

@@ -1,0 +1,49 @@
+#!/bin/sh
+# Argon 主题切换：官方 1.7.2 ↔ 新版 v2.4.3（argon2 目录，零覆盖官方）
+# 只改 mediaurlbase + 清缓存 + 重启 uhttpd；不碰网络、不碰无线、不重启机器。
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+uci(){ command uci "$@" 2>/dev/null; }
+L=/etc/config/luci
+clear_cache(){
+  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
+         /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
+}
+register(){
+  # 两个主题都注册进 LuCI「设计」下拉；绝不覆盖官方 Argon 那一项
+  uci -q set luci.themes.Argon=/luci-static/argon
+  uci -q set luci.themes.Argon_243=/luci-static/argon2
+  uci -q commit luci
+}
+case "${1:-status}" in
+  argon|1.7.2|official)
+    register
+    uci -q set luci.main.mediaurlbase=/luci-static/argon
+    uci -q commit luci
+    clear_cache
+    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    echo '已切回官方 Argon 1.7.2（默认、最稳）' ;;
+  argon243|2.4.3|new)
+    [ -s /www/luci-static/argon2/css/cascade.css ] \
+      && [ -s /usr/lib/lua/luci/view/themes/argon2/header.htm ] \
+      || { echo '🔴 新版主题文件缺失，未切换（仍用官方 1.7.2）'; exit 1; }
+    register
+    uci -q set luci.main.mediaurlbase=/luci-static/argon2
+    uci -q commit luci
+    clear_cache
+    /etc/init.d/uhttpd restart >/dev/null 2>&1 || true
+    echo '已切到 Argon v2.4.3（Lua 版，最后一个兼容本固件的官方新版）' ;;
+  status)
+    cur=$(uci -q get luci.main.mediaurlbase 2>/dev/null || echo '?')
+    case "$cur" in
+      /luci-static/argon2) ver='Argon v2.4.3（新版）' ;;
+      /luci-static/argon)  ver='Argon 1.7.2（官方默认）' ;;
+      *) ver="未知（$cur）" ;;
+    esac
+    printf '当前主题 : %s\n' "$ver"
+    printf 'mediaurlbase : %s\n' "$cur"
+    printf '可选 : argon243（新版 2.4.3） / argon（回官方 1.7.2）\n'
+    printf '新版在位 : %s / 官方在位 : %s\n' \
+      "$([ -s /www/luci-static/argon2/css/cascade.css ] && echo 是 || echo 否)" \
+      "$([ -s /www/luci-static/argon/css/cascade.css ] && echo 是 || echo 否)" ;;
+  *) echo '用法: vs010-theme status|argon243|argon'; exit 1 ;;
+esac

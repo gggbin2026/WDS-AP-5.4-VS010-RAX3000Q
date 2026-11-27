@@ -131,6 +131,15 @@ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:10px}
   background:rgba(255,255,255,.03);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .gaNote b{color:var(--txt);font-weight:600}
 .gaSub{font-size:12px;color:var(--dim);margin:14px 0 8px;letter-spacing:.4px;font-weight:600}
+
+/* 第 15 次：网络与本机三卡（与 /ap/ 同款，补齐 bridge 页缺的类） */
+.ct{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
+.cn{font-weight:700;font-size:14px;letter-spacing:.5px}
+.dot{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;background:rgba(148,163,184,.18);color:#cbd5e1}
+.dot.up{background:rgba(34,197,94,.18);color:#4ade80}
+.dot.warn{background:rgba(234,179,8,.18);color:#facc15}
+.empty{opacity:.6;font-size:13px;padding:10px 4px}
+#links table th,#links table td{border-bottom:1px solid rgba(255,255,255,.08)}
 </style>
 </head>
 <body>
@@ -235,7 +244,13 @@ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:10px}
     </div>
   </div>
 
-  <h2>端口四宫格 · PORTS</h2>
+  <h2>网络与本机 · NETWORK</h2>
+  <div class="grid" id="netgrid"></div>
+
+  <h2>已插网线 · LINK UP</h2>
+  <div class="card" id="links"><div class="empty">读取中…</div></div>
+
+  <h2>已插网线的端口 · PORTS</h2>
   <div class="grid" id="ports"></div>
   <div class="hint" style="margin-top:8px">官方 5.4.213 闭源 NSS 固定链路不向 <code>ethtool</code> 上报协商速率（旧页面误显示 10M / 半双工，实际链路正常）。第 47 次起改从 <b>交换芯片 PHY（swconfig）</b>读真实协商速率，显示千兆全双工并标注来源；读不到才显示「未上报」。实测吞吐为两次刷新间平均流量，空闲时显示 —。</div>
 
@@ -333,6 +348,79 @@ details summary{cursor:pointer;color:var(--dim);font-size:12px;margin-top:10px}
 </div>
 
 <script>
+
+/* 第 15 次：共用 /cgi-bin/vs010-links —— 只显示【已插网线】的口 + 网络/地址分配 */
+function esc2(s){ return String(s==null?'':s).replace(/[&<>"]/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]}); }
+function drawLinks(L){
+  var box=$('links'); if(!box) return;
+  var a=(L&&L.links)||[];
+  if(!a.length){ box.innerHTML='<div class="empty">未检测到已插网线的网口</div>'; return; }
+  var h='<table style="width:100%;border-collapse:collapse;font-size:13px"><tr style="opacity:.65;text-align:left">'+
+        '<th style="padding:6px 8px">端口</th><th style="padding:6px 8px">速率</th>'+
+        '<th style="padding:6px 8px">双工</th><th style="padding:6px 8px">来源</th></tr>';
+  a.forEach(function(p){
+    var sp=(Number(p.speed)||0)>0 ? (p.speed+' Mb/s') : '—';
+    h+='<tr style="border-top:1px solid rgba(255,255,255,.08)">'+
+       '<td style="padding:6px 8px"><b>'+esc2(p['if'])+'</b></td>'+
+       '<td style="padding:6px 8px"><b>'+esc2(sp)+'</b></td>'+
+       '<td style="padding:6px 8px">'+esc2(p.duplex||'-')+'</td>'+
+       '<td style="padding:6px 8px;opacity:.75">'+(p.src==='phy'?'<b>PHY 实测</b>':esc2(p.src))+'</td></tr>';
+  });
+  box.innerHTML=h+'</table><div class="hint" style="margin-top:6px">只列已插网线的口；NSS 固定链路 netdev 不上报时改读交换芯片 PHY 实测值。</div>';
+}
+/* 第 16 次：网桥页【网络设置】三卡 —— 直接用主 CGI 数据，
+   不再依赖 /cgi-bin/vs010-links 是否可达（那正是之前整块空白的真 BUG）。 */
+function drawNet(j){
+  var b=j.bridge||{}, w=j.wds||{}, box=$('netgrid'); if(!box) return;
+  var role=(w.role==='sta')?'客户端 WDS-K':'主 WDS-Z';
+  box.innerHTML=
+    '<div class="card up"><div class="ct"><span class="cn">网桥 · 纯二层</span><span class="dot up">已桥接</span></div><div class="kv">'+
+      '<span>管理地址</span><span>'+esc2(j.admin_ip||'172.10.10.241')+'/22</span><span>协议</span><span>'+esc2(j.proto||'static')+'</span>'+
+      '<span>网桥</span><span>'+esc2(b.name||'br-lan')+'</span><span>成员</span><span>'+esc2(b.members||'eth0 eth1')+'</span>'+
+      '<span>STP</span><span>'+(String(b.stp)==='1'?'开':'关')+'</span><span>WAN/WAN6</span><span>已删除</span></div></div>'+
+    '<div class="card up"><div class="ct"><span class="cn">地址分配</span><span class="dot up">上级分配</span></div><div class="kv">'+
+      '<span>本机 DHCP</span><span><b>关闭（wds/ap 默认）</b></span><span>上级网关</span><span>'+esc2(j.gateway||'—')+'</span>'+
+      '<span>DNS</span><span>'+esc2(j.dns||'—')+'</span><span>IPv6</span><span>全关</span>'+
+      '<span>防火墙</span><span>已彻底关闭</span><span>机器狗</span><span>停用，不会循环重启</span></div>'+
+      '<div style="margin-top:8px;color:#f87171;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端，内网只允许上级一台发地址</div></div>'+
+    '<div class="card"><div class="ct"><span class="cn">固件</span><span class="dot up">'+esc2(j.mode||'wds')+'</span></div><div class="kv">'+
+      '<span>基线</span><span>Linux 5.4.213 / QSDK 闭源栈</span><span>主机名</span><span>'+esc2(j.host)+'</span>'+
+      '<span>板级</span><span>'+esc2(j.board||j.model)+'</span><span>无线信道</span><span>自动（ACS）</span>'+
+      '<span>WDS 角色</span><span>'+esc2(role)+'</span><span>SSID</span><span>'+esc2(w.ssid||'WDS-Bridge-Z')+'</span></div></div>';
+}
+function drawNetCards(n){
+  var box=$('netgrid'); if(!box||!n) return;
+  var on=(n.dhcp_server==='on');
+  var isWds=(n.mode==='wds');
+  box.innerHTML=
+    '<div class="card up"><div class="ct"><span class="cn">网桥</span><span class="dot up">纯二层</span></div><div class="kv">'+
+      '<span>管理地址</span><span>'+esc2(n.admin_ip)+'/22</span><span>链路本地</span><span>'+esc2(n.link_local)+'</span>'+
+      '<span>协议</span><span>'+esc2(n.proto)+'</span><span>网桥</span><span>'+esc2((n.bridge||{}).name||'br-lan')+'</span>'+
+      '<span>成员</span><span>'+esc2((n.bridge||{}).members||'eth0 eth1')+'</span><span>STP</span><span>'+(String((n.bridge||{}).stp)==='1'?'开':'关')+'</span></div></div>'+
+    '<div class="card '+(on?'warn':'up')+'"><div class="ct"><span class="cn">地址分配</span><span class="dot '+(on?'warn':'up')+'">'+(on?'本机发地址':'上级分配')+'</span></div><div class="kv">'+
+      '<span>本机 DHCP</span><span><b>'+(on?'开启（🔴 注意双 DHCP）':'关闭（网桥/AP 默认）')+'</b></span>'+
+      '<span>上级网关</span><span>'+esc2(n.gateway)+'</span><span>DNS</span><span>'+esc2(n.dns)+'</span>'+
+      '<span>WAN</span><span>无（别插标 WAN 的口）</span><span>防火墙</span><span>'+esc2(n.firewall)+'</span>'+
+      '<span>机器狗</span><span>'+(String(n.watchdog)==='1'?'启用':'停用，不会循环重启')+'</span></div></div>'+
+    '<div class="card"><div class="ct"><span class="cn">固件</span><span class="dot up">'+esc2(n.mode||'wds')+'</span></div><div class="kv">'+
+      '<span>基线</span><span>Linux 5.4.213 / QSDK 闭源栈</span><span>主机名</span><span>'+esc2(n.host)+'</span>'+
+      '<span>板级</span><span>'+esc2(n.board)+'</span><span>IPv6</span><span>'+(String(n.ipv6)==='0'?'全关':'未关')+'</span>'+
+      '<span>状态页</span><span>'+(isWds?'/bridge/（本页，网桥专用）':'/ap/（本页，AP 专用）')+'</span>'+
+      '<span>WDS</span><span>'+(isWds?esc2(n.role==='sta'?'客户端 WDS-K':'主 WDS-Z'):'无，另一套固件')+'</span></div></div>';
+}
+function loadLinks(){
+  var urls=['../cgi-bin/vs010-links?_='+Date.now(),'/cgi-bin/vs010-links?_='+Date.now()],i=0;
+  function next(){
+    if(i>=urls.length) return;   /* 共用端点失败不影响主页面 */
+    fetch(urls[i++],{cache:'no-store'}).then(function(r){if(!r.ok)throw 0;return r.json()})
+      .then(function(j){ if(!j||!j.ok) throw 0; drawLinks(j);
+                          /* 第 16 次：主 CGI 已渲染就不覆盖；共用端点只作兜底 */
+                          if ($('netgrid') && !$('netgrid').innerHTML) drawNetCards(j.net); })
+      .catch(next);
+  }
+  next();
+}
+
 var TIMER=null, LEFT=0, REFRESH=10;
 function $(id){ return document.getElementById(id); }
 
@@ -486,9 +574,14 @@ function render(j){
   txt('uptime', j.uptime);
   txt('time', j.time + (j.time_synced?'':'（未校时）'));
   $('luci').href = '../cgi-bin/luci';
+  drawNet(j);   /* 第 16 次：网桥页也有网络设置，不依赖共用端点 */
 
   var box=$('ports'); box.textContent='';
-  (j.ports||[]).forEach(function(p){ box.appendChild(card(p)); });
+  /* 第 15 次：只显示已插网线的口，未插线/未上报的一律不铺开，页面不杂乱 */
+  (j.ports||[]).filter(function(p){
+    var lk=String(p.link||'').toLowerCase();
+    return (lk==='yes'||lk==='up'||lk==='1') || (Number(p.speed||0)>0 && p['if']!=='br-lan');
+  }).forEach(function(p){ box.appendChild(card(p)); });
 
   var w=j.wds||{};
   txt('role', (j.wds && j.wds.role==='ap') ? '主 AP · 172.10.10.241' : (j.wds && j.wds.role==='sta') ? '备 STA · 172.10.10.241' : (j.wds ? j.wds.role : '—'));
@@ -590,6 +683,7 @@ function load(manual){
       .catch(function(){ tryNext(); });
   }
   tryNext();
+  loadLinks();                 /* 第 15 次：共用端点，只取已插线口 + 网络三卡 */
   if(manual) LEFT=REFRESH;
 }
 

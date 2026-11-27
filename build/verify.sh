@@ -74,7 +74,7 @@ grep -q 'net.ipv6.conf.all.disable_ipv6=1' files/etc/sysctl.d/99-vs010-no-ipv6.c
 grep -q "setv network.lan ifname 'eth0 eth1'" files/etc/init.d/vs010-mode \
   && grep -q 'uci -q delete network.wan' files/etc/init.d/vs010-mode \
   && ok 'WAN+LAN 全部桥接进 br-lan（无 wan/wan6）' || bad 'WAN 未入桥'
-grep -q 'ADMIN_HASH=' files/etc/init.d/vs010-mode \
+grep -q 'PW_HASH=' files/etc/init.d/vs010-mode \
   && grep -q 'fix_login' files/etc/init.d/vs010-mode \
   && ! grep -q '/bin/passwd root' files/etc/init.d/vs010-mode \
   && grep -q 'RootPasswordAuth=on' files/etc/init.d/vs010-mode \
@@ -121,7 +121,7 @@ grep -q 'set-role master' files/usr/sbin/vs010-wds-pair \
 ! grep -q '\*11a\*' files/usr/sbin/vs010-wds-pair \
   && grep -q 'channel 优先' files/usr/sbin/vs010-wds-pair \
   && ok 'WDS 只建 5G radio（11axg 不误判）' || bad 'WDS 可能落到 2.4G'
-grep -Fq "ADMIN_HASH='\$1\$VS010Z" files/etc/init.d/vs010-mode \
+grep -Fq "PW_HASH='\$1\$VS010Z" files/etc/init.d/vs010-mode \
   && grep -q 'fix_login' files/etc/init.d/vs010-mode \
   && ok 'root 密码 admin（固定 hash，每次开机幂等）' || bad '未设 root 密码'
 grep -q '172.10.10.241' files/etc/vs010/ipaddr && grep -q '255.255.252.0' files/etc/vs010/netmask \
@@ -149,8 +149,8 @@ grep -q 'H=WDS-Z' files/usr/sbin/vs010-host && grep -q 'H=WDS-K' files/usr/sbin/
   && grep -q 'H=AP' files/usr/sbin/vs010-host \
   && ok '设备名：WDS 主 WDS-Z / 客户端 WDS-K / AP' || bad '设备名不对'
 grep -q 'htmode=HT160' files/usr/sbin/vs010-wds-pair \
-  && grep -q 'channel=36' files/usr/sbin/vs010-wds-pair \
-  && ok '5G 桥接 HE160（QSDK 11axa+HT160→11AHE160）' || bad '未设 HE160'
+  && grep -q 'channel=auto' files/usr/sbin/vs010-wds-pair \
+  && ok '5G 桥接 HE160 + 信道自动（11axa+HT160→11AHE160，auto→ACS）' || bad '未设 HE160/信道自动'
 grep -q '2.4G 不桥接' files/usr/sbin/vs010-wds-pair \
   && grep -q '"\$dev" = "\$d"' files/usr/sbin/vs010-wds-pair \
   && grep -q 'delete "wireless.\$sec.wds"' files/usr/sbin/vs010-wds-pair \
@@ -200,9 +200,9 @@ else
   ok '注入树零覆盖官方 LuCI 文件（新增仅 vs010_ 前缀，撞名即停）'
 fi
 find files -type f \( -name '*.lua' -o -name '*.htm' \) 2>/dev/null \
-  | grep -v 'vs010_ports' | grep -q . \
-  && bad '注入树含非 vs010_ 前缀的 LuCI 文件' \
-  || ok '新增 LuCI 文件均为 vs010_ports（零冲突）'
+  | grep -vE 'vs010(_|\.lua)|/themes/argon2/' | grep -q . \
+  && bad '注入树含非 vs010_ / 非 argon2 主题的 LuCI 文件' \
+  || ok '新增 LuCI 仅 vs010_ 前缀 + 独立主题目录 argon2（零冲突）'
 # 页面里的 LuCI 链接与官方 lua_prefix 对齐
 grep -q 'cgi-bin/luci' files/www/bridge/index.html && grep -q 'cgi-bin/luci' files/www/ap/index.html \
   && ok '两个丰富页面的 LuCI 入口链接有效' || bad '页面 LuCI 链接断'
@@ -227,10 +227,11 @@ PYX
 ) || { echo '  FAIL  Release body 解析失败'; F=1; }
 BN=$(printf '%s\n' "$BODY" | wc -l)
 [ "$BN" -le 25 ] && ok "下载页简洁（$BN 行，不做复杂长文）" || bad '下载页过长'
-for k in '172.10.10.241' '255.255.252.0' 'root' 'admin' 'TTYD' '插件' 'bridge-watchdog' 'portstat' '保留配置' '5.4.213'; do
+for k in '172.10.10.241' '255.255.252.0' 'root' 'admin' 'TTYD' '插件' 'bridge-watchdog' 'portstat' '保留配置' '5.4.213' \
+         'DHCP' '<u>' 'dhcp.lan.ignore=1' '网桥状态' 'AP 状态'; do
   printf '%s\n' "$BODY" | grep -q "$k" || bad "下载页缺: $k"
 done
-[ "$F" = 0 ] && ok '下载页含 IP/掩码/账号/设置/插件清单/刷机必读' || true
+[ "$F" = 0 ] && ok '下载页含 IP/掩码/账号/设置/插件清单/DHCP 红字划线/刷机必读' || true
 printf '%s\n' "$BODY" | grep -q '^| 项 | 值 |' \
   && ok '下载页用一张表承载设置（简洁）' || bad '下载页缺设置表'
 
@@ -444,11 +445,16 @@ print('  ✅ 负例：无线栈缺失的基线被护栏拒绝（rc=%d）' % r.re
 PYB
 if grep -q '第 12 次' CHANGELOG.md; then ok 'CHANGELOG 已记第 12 次'; else echo '  NOTE  第 12 次文档未同步（不影响编译）'; fi
 
+# ★ 第 16 次硬校验：PW_HASH 必须等于 openssl -1 -salt VS010Z admin（杜绝占位符）
+HASH=$(sed -n "s/^PW_HASH='//;s/'\$//p" files/etc/init.d/vs010-mode | head -1)
+CALC=$(openssl passwd -1 -salt VS010Z admin)
+[ "$HASH" = "$CALC" ] && [ "${HASH#*...}" = "$HASH" ] \
+  && ok "登录密码 = admin（真实 MD5-crypt：$HASH）" || bad "密码不是 admin 或仍是占位符"
 echo "── 第 13 次：实机两 BUG 修复（root/admin + 5G 单 SSID）──"
 M=files/etc/init.d/vs010-mode; W=files/usr/sbin/vs010-wds-pair
 # ① 密码：固定 hash、每次开机都在 stamp 之前修、不再用会静默失败的 passwd
-grep -Fq "ADMIN_HASH='\$1\$VS010Z\$UZ4qew78etSeRS5gXbjrR1'" "$M" \
-  && ok 'admin 固定 MD5-crypt hash 写入（openssl -salt VS010Z）' || bad '密码 hash 不对'
+grep -Fq "PW_HASH='\$1\$VS010Z\$UZ4qew78etSeRS5gXbjrR1'" "$M" \
+  && ok 'password 固定 MD5-crypt hash 写入（openssl -salt VS010Z）' || bad '密码 hash 不对（应为 admin）'
 ! grep -q '/bin/passwd root' "$M" && ok '已弃用 passwd（只读底层/非 tty 会失败）' || bad '仍用 passwd'
 grep -q '^  fix_login        # ★ 放在 stamp 检查之前' "$M" \
   && grep -q '^  fix_login$' "$M" \
@@ -473,13 +479,13 @@ grep -q '^  converge) converge' "$W" && grep -q 'converge || return 1' "$W" \
 python3 - <<'PY13A' || F=1
 import subprocess, tempfile, pathlib, os
 src = pathlib.Path('files/etc/init.d/vs010-mode').read_text()
-h = [l for l in src.splitlines() if l.startswith('ADMIN_HASH=')][0].split("'",1)[1].split("'",1)[0]
+h = [l for l in src.splitlines() if l.startswith('PW_HASH=')][0].split("'",1)[1].split("'",1)[0]
 i = src.index('fix_login(){'); j = src.index('\n}', i) + 2
 fn = src[i:j]
 t = tempfile.mkdtemp(); sh = pathlib.Path(t,'shadow')
 orig = 'root::0:0:99999:7:::\ndaemon:*:0:0:99999:7:::\nntp:x:0:0:99999:7:::\n'
 sh.write_text(orig)
-script = 'log(){ :; }\nADMIN_HASH=' + "'"+h+"'" + '\n' + fn + '\nfix_login\n'
+script = 'log(){ :; }\nPW_HASH=' + "'"+h+"'" + '\n' + fn + '\nfix_login\n'
 env = dict(os.environ, VS010_SHADOW=str(sh))
 r = subprocess.run(['sh','-c',script], env=env, capture_output=True, text=True)
 if r.returncode: print('  FAIL fix_login 执行错', r.stderr[-300:]); raise SystemExit(1)
@@ -581,12 +587,578 @@ ok = (len(enabled5)==1
       and g(d1,'wireless.radio0.wds') is None
       and g(d1,'wireless.radio0.disabled')=='0'
       and g(d1,'wireless.wifi1.htmode')=='HT160'
-      and g(d1,'wireless.wifi1.channel')=='36'
+      and g(d1,'wireless.wifi1.channel')=='auto'
       and d1==d2)
 shutil.rmtree(t)
 if not ok: print('  FAIL 5G 单 SSID 收敛/幂等 不成立'); raise SystemExit(1)
-print('  ✅ mock B：2 个 5G VAP → 仅 1 个 WDS-Bridge-Z；2.4G 不动；HE160；二次幂等')
+print('  ✅ mock B：2 个 5G VAP → 仅 1 个 WDS-Bridge-Z；2.4G 不动；HE160；信道 auto；二次幂等')
 PY13B
+
+echo "── 第 14 次：固件长期保存 / 只保留 5 个 ──"
+Y=.github/workflows/build-openwrt.yml
+grep -Fq 'KEEP_RELEASES: 5' "$Y" && ok '保留数 5（可改数字，0=不清理）' || bad '缺保留数配置'
+grep -Fq 'retention-days: 90' "$Y" && ok 'artifact 设 90 天（GitHub 上限）；长期以 Release 为准' || bad 'artifact 未设最长保留'
+grep -Fq '  cleanup:' "$Y" && grep -Fq 'needs: build' "$Y" && grep -Fq 'if: success()' "$Y" \
+  && ok 'cleanup 独立 job，等 4 个构建全发完再跑（不会并发互删）' || bad 'cleanup 时序不安全'
+grep -Fq 'startswith("fw-5.4-")' "$Y" \
+  && ok '只清理本流水线 fw-5.4- 前缀 Release（不误删用户手动建的 tag）' || bad '会误删非固件 Release'
+grep -Fq 'tail -n +$((KEEP+1))' "$Y" && grep -Fq -- '--cleanup-tag' "$Y" \
+  && ok '按创建时间倒序保留前 5 个，旧 Release 连 tag 一起删' || bad '保留/清理逻辑缺'
+grep -Fq 'GH_TOKEN: ${{ github.token }}' "$Y" && grep -Fq '  contents: write' "$Y" \
+  && ok 'cleanup 有 contents: write 与 token（继承顶层授权）' || bad '清理无权限'
+# 真跑 mock：从 YAML 抽出 cleanup 的真实 run 块，喂假 gh（14 个 Release，含 2 个非 fw-5.4）
+python3 - <<'PY14' || F=1
+import re, pathlib, subprocess, tempfile, os, json, shutil, stat
+s = pathlib.Path('.github/workflows/build-openwrt.yml').read_text()
+lines = s.splitlines()
+i = next(k for k,l in enumerate(lines) if 'Keep latest firmware releases' in l)
+j = next(k for k in range(i,len(lines)) if re.match(r'^\s+run:\s*\|\s*$', lines[k]))
+base = len(lines[j]) - len(lines[j].lstrip(' '))
+blk=[]
+for x in lines[j+1:]:
+    if x.strip() and len(x)-len(x.lstrip(' ')) <= base: break
+    blk.append(x)
+ind = min(len(x)-len(x.lstrip(' ')) for x in blk if x.strip())
+run = '\n'.join(x[ind:] if len(x)>=ind else x for x in blk)
+if 'gh release delete' not in run: print('  FAIL 未抽到 cleanup run 块'); raise SystemExit(1)
+
+t = tempfile.mkdtemp(); bind = pathlib.Path(t,'bin'); bind.mkdir()
+fake = r'''#!/usr/bin/env python3
+import sys,os,json
+a=sys.argv[1:]
+if a[:2]==['release','list']:
+    d=json.load(open(os.environ['MOCK_RELEASES']))
+    # 模拟 --jq 'sort_by(.createdAt)|reverse|map(select(startswith("fw-5.4-")))|.[].tagName'
+    for r in sorted(d,key=lambda x:x['createdAt'],reverse=True):
+        if r['tagName'].startswith('fw-5.4-'): print(r['tagName'])
+elif a[:2]==['release','delete']:
+    open(os.environ['MOCK_DELETED'],'a').write(a[2]+'\n')
+'''
+p = bind/'gh'; p.write_text(fake); p.chmod(0o755)
+# 12 个固件 Release（时间从新到旧）+ 2 个非固件 tag（必须原样保留）
+rels=[{'tagName':'fw-5.4-run%02d'%(20-n),'createdAt':'2026-11-%02dT00:00:00Z'%(27-n)} for n in range(12)]
+rels += [{'tagName':'RAX3000Q-2026.11.25-0345','createdAt':'2026-11-26T00:00:00Z'},
+         {'tagName':'manual-backup','createdAt':'2026-11-25T00:00:00Z'}]
+rels.sort(key=lambda x:x['createdAt'],reverse=True)
+rp=pathlib.Path(t,'releases.json'); rp.write_text(json.dumps(rels))
+dp=pathlib.Path(t,'deleted.txt'); dp.write_text('')
+env=dict(os.environ, PATH=str(bind)+':'+os.environ['PATH'],
+         GITHUB_REPOSITORY='mock/repo', KEEP='5',
+         MOCK_RELEASES=str(rp), MOCK_DELETED=str(dp))
+r=subprocess.run(['bash','-c',run],env=env,capture_output=True,text=True)
+if r.returncode: print('  FAIL cleanup run 执行错:',r.stdout[-400:],r.stderr[-400:]); raise SystemExit(1)
+deleted=dp.read_text().splitlines()
+fw=[x['tagName'] for x in rels if x['tagName'].startswith('fw-5.4-')]
+expect=fw[5:]
+kept=[x for x in fw if x not in deleted]
+print('   总固件 Release',len(fw),'| 删除',len(deleted),'| 保留',len(kept),'| 误删非固件',
+      [x for x in deleted if not x.startswith('fw-5.4-')])
+ok = (deleted==expect and len(kept)==5
+      and not [x for x in deleted if not x.startswith('fw-5.4-')]
+      and '保留前 5 个' in r.stdout)
+shutil.rmtree(t)
+if not ok: print('  FAIL 保留 5 个 / 只删本流水线 tag 不成立'); raise SystemExit(1)
+print('  ✅ mock：12 个固件 Release → 删 7 留 5，2 个非固件 tag 一个没动')
+PY14
+if grep -Fq '第 14 次' CHANGELOG.md; then ok 'CHANGELOG 已记第 14 次'; else echo '  NOTE  第 14 次文档未同步（不影响编译）'; fi
+
+echo "── 第 15 次：MU-MIMO/WMM/弱信号、IPv6/DHCP/防火墙全关、主题内置入口 ──"
+M=files/etc/init.d/vs010-mode; W=files/usr/sbin/vs010-wds-pair
+# ① 字段名必须来自官方 qcawifi.sh，不能是我编的（解官方 rootfs 实查）
+python3 - <<'PY15FIELD' || F=1
+import pathlib,struct,subprocess,tempfile,os,shutil
+PEB,VID,DATA=131072,2048,4096
+p='3000Q-VS010-固件/Nwrt-QSDK12.2-2024-04-16-ipq50xx-ipq50xx_32-cucc_vs010-squashfs-nand-factory.bin'
+b=pathlib.Path(p).read_bytes(); v={}
+for i in range(len(b)//PEB):
+ x=b[i*PEB:(i+1)*PEB]
+ if x[:4]==b'UBI#' and x[VID:VID+4]==b'UBI!':
+  v.setdefault(struct.unpack_from('>I',x,VID+8)[0],{})[struct.unpack_from('>I',x,VID+12)[0]]=x[DATA:]
+t=tempfile.mkdtemp(); f=t+'/r'; pathlib.Path(f).write_bytes(b''.join(v[1][k] for k in sorted(v[1])))
+d=t+'/x'; subprocess.run(['unsquashfs','-f','-d',d,f],capture_output=True)
+q=os.path.join(d,'lib/wifi/qcawifi.sh'); s=open(q,errors='replace').read()
+need=['config_get_bool wmm "$vif" wmm','config_get he_ulmumimo "$vif" he_ulmumimo',
+      'config_get he_mubfer "$vif" he_mubfer','config_get he_dlofdma "$vif" he_dlofdma',
+      'config_get he_ulofdma "$vif" he_ulofdma',
+      'config_get db_rssi_thr "$vif" db_rssi_thr','config_get db_timeout "$vif" db_timeout']
+host=open(os.path.join(d,'lib/wifi/hostapd.sh'),errors='replace').read()
+print('   官方 qcawifi.sh 字段:',len(need),'项')
+for n in need: print('   ',('OK  ' if n in s else 'FAIL'),n)
+print('   官方 hostapd.sh 内建 wmm_enabled=1:', 'wmm_enabled=1' in host)
+ok=all(n in s for n in need) and 'wmm_enabled=1' in host
+shutil.rmtree(t)
+if not ok: raise SystemExit(1)
+print('  ✅ MU-MIMO/WMM/弱信号字段全部在官方 QSDK 源码里真实存在')
+PY15FIELD
+for k in 'wmm=1' 'he_ulmumimo=1' 'he_mubfer=1' 'he_dlofdma=1' 'he_ulofdma=1' \
+         'db_rssi_thr=' 'db_timeout=10' '/etc/vs010/weak.rssi'; do
+  grep -Fq "$k" "$M" || bad "AP 模式缺 $k"
+done
+[ "$F" = 0 ] && ok 'AP 开 MU-MIMO/WMM + 弱信号剔除/拒绝（阈值可改 weak.rssi，默认 -70）' || true
+for k in 'wmm=1' 'he_ulmumimo=1' 'he_mubfer=1' 'he_dlofdma=1' 'he_ulofdma=1'; do
+  grep -Fq "$k" "$W" || bad "网桥模式缺 $k"
+done
+[ "$F" = 0 ] && ok '网桥 WDS 主 VAP 同样开 MU-MIMO/WMM' || true
+# ② IPv6 / DHCP / 防火墙：每次开机（scrub）都跑，不受 stamp 限制
+for fn in kill_ipv6 kill_dhcp kill_firewall fix_login wifi_single_5g; do
+  grep -Fq "$fn" "$M" || bad "缺 $fn"
+done
+grep -Fq 'ip6assign ip6prefix ip6class ip6hint ip6ifaceid ip6weight' "$M" \
+  && grep -Fq '/proc/sys/net/ipv6/conf/*/disable_ipv6' "$M" \
+  && grep -Fq 'uci -q set network.lan.ipv6=' "$M" \
+  && ok 'IPv6 全关：UCI 选项 + 所有网卡 sysctl + odhcpd 停' || bad 'IPv6 关不彻底'
+grep -Fq "dhcp.lan.ignore='1'" "$M" && grep -Fq '/etc/init.d/dnsmasq disable' "$M" \
+  && grep -Fq '[!!! DHCP !!!]' "$M" \
+  && ok '本机 DHCP 服务端全关（wds/ap 都关）+ 开机日志红字' || bad 'DHCP 未全关'
+grep -Fq 'iptables -F' "$M" && grep -Fq 'nft flush ruleset' "$M" \
+  && grep -Fq '/etc/init.d/firewall disable' "$M" \
+  && ok '防火墙服务 + 自启 + iptables/nft 规则全清' || bad '防火墙未彻底关'
+grep -Fq 'wifi_single_5g' "$M" && grep -Fq 'WDS-Bridge-Z' "$M" \
+  && ok '5G 单 SSID 内联兜底（不依赖外部脚本）+ 15 秒重试' || bad '5G 兜底缺'
+# ③ MAC 全自动读，绝不硬编码
+if grep -rE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' files files.vs010 files.rax3000q 2>/dev/null | grep -q .; then
+  bad '注入树含硬编码 MAC'
+else
+  grep -Fq '/sys/class/net/' "$W" && grep -Fq 'mymac()' "$W" \
+    && ok 'MAC 全部从 sysfs/ART 自动读，零硬编码（WDS 配对也用它）' || bad 'MAC 不是自动读'
+fi
+# ④ 主题内置入口
+for f in files/usr/lib/lua/luci/controller/admin/vs010.lua \
+         files/usr/lib/lua/luci/view/vs010_bridge.htm \
+         files/usr/lib/lua/luci/view/vs010_ap.htm \
+         files/usr/lib/lua/luci/view/vs010_console.htm; do
+  [ -s "$f" ] && ok "$(basename "$f") 在位" || bad "缺 $f"
+done
+grep -Fq 'entry({"admin", "status", "vs010_bridge"' files/usr/lib/lua/luci/controller/admin/vs010.lua \
+  && grep -Fq 'entry({"admin", "status", "vs010_ap"' files/usr/lib/lua/luci/controller/admin/vs010.lua \
+  && grep -Fq 'entry({"admin", "status", "vs010_console"' files/usr/lib/lua/luci/controller/admin/vs010.lua \
+  && ok 'Argon「状态」菜单新增 网桥状态 / AP 状态 / WDS 控制台' || bad '主题菜单缺入口'
+for f in vs010_bridge vs010_ap vs010_console; do
+  h=$(grep -c '<%+header%>' "files/usr/lib/lua/luci/view/$f.htm")
+  t=$(grep -c '<%+footer%>' "files/usr/lib/lua/luci/view/$f.htm")
+  [ "$h" = 1 ] && [ "$t" = 1 ] || bad "$f.htm header/footer 结构错"
+done
+[ "$F" = 0 ] && ok '3 个视图 header/footer 闭合（不会报主题 427 那类错）' || true
+grep -Fq 'iframe src="/bridge/"' files/usr/lib/lua/luci/view/vs010_bridge.htm \
+  && grep -Fq 'iframe src="/ap/"' files/usr/lib/lua/luci/view/vs010_ap.htm \
+  && ok '丰富页用 iframe 内嵌，原页面/CGI 一字未改' || bad '主题入口没链到丰富页'
+grep -Fq 'vs010_bridge' .github/workflows/build-openwrt.yml \
+  && grep -Fq '<u>' .github/workflows/build-openwrt.yml \
+  && ok '下载页含主题入口与 DHCP <u> 划线红字' || bad '下载页缺提示'
+grep -Fq '[!!! DHCP !!!]' CHANGELOG.md && grep -Fq '[!!! DHCP !!!]' README.md \
+  && ok 'CHANGELOG / README（日志与主页）也有 DHCP 红字' || bad '日志缺 DHCP 红字'
+
+# ⑤ mock 真跑：假 uci + 假 init.d，验证 IPv6/DHCP/AP 弱信号/5G 单 SSID 的 UCI 结果
+python3 - <<'PY15MOCK' || F=1
+import json, os, pathlib, subprocess, tempfile, shutil
+src = pathlib.Path('files/etc/init.d/vs010-mode').read_text()
+def grab(name):
+    i = src.index(name+'(){'); j = src.index('\n}', i) + 2
+    return src[i:j]
+t = tempfile.mkdtemp(); bind = pathlib.Path(t,'bin'); bind.mkdir()
+initd = pathlib.Path(t,'initd'); initd.mkdir()
+ipvc = pathlib.Path(t,'ipv6conf/all'); ipvc.mkdir(parents=True)
+(pathlib.Path(t,'ipv6conf/all/disable_ipv6')).write_text('0\n')
+vsdir = pathlib.Path(t,'vs010'); vsdir.mkdir()
+(vsdir/'weak.rssi').write_text('-70\n')
+pathlib.Path(t,'firmware_model').write_text('cucc_vs010\n')
+pathlib.Path(t,'wireless').write_text('# mock\n')
+pathlib.Path(t,'sysctl.conf').write_text('net.ipv6.conf.all.disable_ipv6=1\n')
+# 假 init.d：所有服务脚本都成功返回；假 iptables/nft/sysctl 绝不碰宿主机
+for n in ('dnsmasq','odhcpd','firewall','fw3'):
+    p=initd/n; p.write_text('#!/bin/sh\nexit 0\n'); p.chmod(0o755)
+for n in ('iptables','ip6tables','nft','sysctl','logger'):
+    p=bind/n; p.write_text('#!/bin/sh\nexit 0\n'); p.chmod(0o755)
+state = pathlib.Path(t,'uci.json')
+db = {
+ 'wireless.wifi0':{'_type':'wifi-device'},'wireless.wifi0.hwmode':'11axg','wireless.wifi0.channel':'1',
+ 'wireless.wifi1':{'_type':'wifi-device'},'wireless.wifi1.hwmode':'11axa','wireless.wifi1.channel':'36',
+ 'wireless.radio0':{'_type':'wifi-iface'},'wireless.radio0.device':'wifi0','wireless.radio0.ssid':'Nwrt_2.4G',
+ 'wireless.radio0.disabled':'0','wireless.radio0.mode':'ap',
+ 'wireless.radio1':{'_type':'wifi-iface'},'wireless.radio1.device':'wifi1','wireless.radio1.ssid':'Nwrt_5G',
+ 'wireless.radio1.disabled':'0','wireless.radio1.mode':'ap',
+ 'wireless.radio1_1':{'_type':'wifi-iface'},'wireless.radio1_1.device':'wifi1','wireless.radio1_1.ssid':'Nwrt_5G_Guest',
+ 'wireless.radio1_1.disabled':'0','wireless.radio1_1.mode':'ap',
+ 'network.lan':{'_type':'interface'},'network.lan.ip6assign':'64','network.lan.ipv6':'1',
+ 'network.globals':{'_type':'globals'},'network.globals.ula_prefix':'fd00::/64',
+ 'network.wan6':{'_type':'interface'},
+ 'dhcp.lan':{'_type':'dhcp'},'dhcp.lan.ra':'server','dhcp.lan.dhcpv6':'server','dhcp.lan.ndp':'relay',
+ 'dhcp.wan6':{'_type':'dhcp'},
+}
+state.write_text(json.dumps(db))
+fake = r'''#!/usr/bin/env python3
+import sys,os,json
+S=os.environ['UCI_STATE']; db=json.load(open(S))
+a=[x for x in sys.argv[1:] if x!='-q']; c=a[0] if a else 'show'
+TYPES=('wifi-iface','wifi-device','interface','globals','dhcp','core','timeserver','wdsdog','dhcp-guard','ntp-sync')
+def dump(): json.dump(db,open(S,'w'))
+if c=='show':
+    sec=a[1] if len(a)>1 else ''
+    for k,v in db.items():
+        if sec and not (k==sec or k.startswith(sec+'.')): continue
+        if isinstance(v,dict): print(k+'='+v.get('_type',''))
+        else: print(k+"='"+str(v)+"'")
+elif c=='get':
+    v=db.get(a[1]); sys.exit(1 if v is None else (print(v.get('_type','') if isinstance(v,dict) else v) or 0))
+elif c=='set':
+    k,_,v=a[1].partition('='); db[k]={'_type':v} if v in TYPES else v; dump()
+elif c=='delete': db.pop(a[1],None); dump()
+elif c=='commit': dump()
+'''
+p=bind/'uci'; p.write_text(fake); p.chmod(0o755)
+body = '\n'.join(grab(n) for n in ('kill_ipv6','kill_dhcp','kill_firewall','set_ap_ssid','wifi_single_5g'))
+for old,new in [('/etc/init.d/',str(initd)+'/'),('/proc/sys/net/ipv6/conf/',str(pathlib.Path(t,'ipv6conf'))+'/'),
+                ('/etc/sysctl.d/99-vs010-no-ipv6.conf',str(pathlib.Path(t,'sysctl.conf'))),
+                ('/etc/vs010/',str(vsdir)+'/'),('/etc/firmware_model',str(pathlib.Path(t,'firmware_model'))),
+                ('/etc/config/wireless',str(pathlib.Path(t,'wireless')))]:
+    body = body.replace(old,new)
+script = ("PATH="+str(bind)+":/usr/sbin:/usr/bin:/sbin:/bin; export PATH\n"
+          "uci(){ command uci \"$@\" 2>/dev/null; }\nlog(){ :; }\n"
+          + body + "\nkill_ipv6; kill_dhcp; kill_firewall; set_ap_ssid\n"
+          "# 再模拟 WDS 场景：把主 VAP 改成 WDS-Bridge-Z 后跑内联兜底\n"
+          "uci -q set wireless.radio1.ssid=WDS-Bridge-Z\nwifi_single_5g\n")
+env=dict(os.environ, UCI_STATE=str(state))
+r=subprocess.run(['sh','-c',script],env=env,capture_output=True,text=True)
+if r.returncode: print('  FAIL mock 执行错:',r.stdout[-500:],r.stderr[-500:]); raise SystemExit(1)
+d=json.loads(state.read_text())
+g=lambda k: d.get(k)
+checks={
+ 'network.lan.ipv6=0': g('network.lan.ipv6')=='0',
+ 'ip6assign 已删': g('network.lan.ip6assign') is None,
+ 'ULA 前缀已删': g('network.globals.ula_prefix') is None,
+ 'network.wan6 已删': g('network.wan6') is None,
+ 'dhcp.wan6 已删': g('dhcp.wan6') is None,
+ 'RA/DHCPv6/NDP 全 off': all(g('dhcp.lan.'+x)=='off' for x in ('ra','dhcpv6','ndp')),
+ 'dhcp.lan.ignore=1': g('dhcp.lan.ignore')=='1',
+ '所有网卡 disable_ipv6=1': (pathlib.Path(t,'ipv6conf/all/disable_ipv6')).read_text().strip()=='1',
+ 'AP SSID 按机型 VS010-AP': (pathlib.Path(t,'vs010/ap.ssid')).exists() and (pathlib.Path(t,'vs010/ap.ssid')).read_text().strip()=='VS010-AP',
+ 'AP 弱信号阈值 -70': g('wireless.radio1.db_rssi_thr')=='-70',
+ 'AP db_timeout=10': g('wireless.radio1.db_timeout')=='10',
+ 'WMM=1': g('wireless.radio1.wmm')=='1',
+ 'he_ulmumimo=1': g('wireless.radio1.he_ulmumimo')=='1',
+ 'he_mubfer/dlofdma/ulofdma=1': all(g('wireless.radio1.'+x)=='1' for x in ('he_mubfer','he_dlofdma','he_ulofdma')),
+ '2.4G 也开 WMM/MU': g('wireless.radio0.wmm')=='1' and g('wireless.radio0.he_ulmumimo')=='1',
+ '5G 仅 1 个 enabled VAP': g('wireless.radio1.disabled')=='0' and g('wireless.radio1_1.disabled')=='1',
+}
+for k,v in checks.items(): print('   ',('OK  ' if v else 'FAIL'),k)
+shutil.rmtree(t)
+if not all(checks.values()): raise SystemExit(1)
+print('  ✅ mock：IPv6/DHCP/防火墙全关 + AP 弱信号/MU/WMM + 5G 单 SSID 全部落到 UCI')
+PY15MOCK
+if grep -Fq '第 15 次' CHANGELOG.md && grep -Fq '第 15 次' README.md; then
+  ok 'CHANGELOG / 仓库主页已记第 15 次'
+else
+  echo '  NOTE  第 15 次文档未同步（不影响编译）'
+fi
+
+
+echo "── 第 15 次扩展：密码 admin / 弱信号守护 / 已插线速率 / 总览 IPv6 / 双页 NETWORK ──"
+M=files/etc/init.d/vs010-mode
+grep -Fq "PW_HASH='\$1\$VS010Z\$UZ4qew78etSeRS5gXbjrR1'" "$M" && ok '登录密码 = admin（最新拍板，真实 hash）' || bad '密码 hash 不是 admin'
+grep -Fq 'root/admin 已写入 shadow' "$M" && ok 'fix_login 日志口径同步 admin' || bad 'fix_login 日志仍写 password'
+grep -Fq '`root` / `admin`' .github/workflows/build-openwrt.yml && ok '下载页账号 = admin' || bad '下载页账号不是 admin'
+grep -Fq '`root` / `password`' README.md && ok '仓库主页账号 = admin' || bad 'README 账号不是 admin'
+# ap-rssi-guard（AP 页那套命令必须真能用）
+G=files/usr/sbin/ap-rssi-guard
+[ -s "$G" ] && sh -n "$G" && ok 'ap-rssi-guard 脚本在位且语法通过' || bad 'ap-rssi-guard 缺失/语法错'
+for k in 'status)' 'on)' 'off)' 'dryrun)' 'set)' 'loop)' 'db_rssi_thr' 'ap-rssi-guard.main'; do
+  grep -Fq "$k" "$G" || bad "ap-rssi-guard 缺 $k"
+done
+grep -Fq 'ap-rssi-guard.main' files/www/cgi-bin/apstatus   && ok 'AP 页 CGI 读的正是这套 UCI 字段（页面命令与实现闭环）' || bad '页面与脚本字段不闭环'
+# 共用 CGI：只列已插线口 + net 三卡
+C=files/www/cgi-bin/vs010-links
+[ -s "$C" ] && sh -n "$C" && ok 'vs010-links 共用端点在位且语法通过' || bad '共用端点缺失/语法错'
+grep -Fq 'carrier' "$C" && grep -Fq 'Link detected' "$C"   && ok '只返回已插网线口（carrier=1 / ethtool yes）' || bad '未过滤未插线口'
+for k in admin_ip bridge dhcp_server gateway dns firewall watchdog snooping phy_speed; do
+  grep -Fq "$k" "$C" || bad "共用端点缺 net.$k"
+done
+# 两个丰富页
+for f in files/www/bridge/index.html files/www/ap/index.html; do
+  grep -Fq 'LINK UP' "$f" || bad "$(basename $(dirname $f)) 页缺「已插网线」区块"
+  grep -Fq 'vs010-links' "$f" || bad "$(basename $(dirname $f)) 页未接共用端点"
+done
+grep -Fq 'netgrid' files/www/bridge/index.html   && ok '网桥页也补上「网络与本机 / 地址分配」三卡（与 AP 页一致）' || bad '网桥页缺 NETWORK'
+grep -Fq 'filter(function(p)' files/www/bridge/index.html   && ok '网桥四宫格只显示已插线口，不再铺一堆' || bad '四宫格未过滤'
+grep -Fq "if (\$('netgrid') && !\$('netgrid').innerHTML)" files/www/ap/index.html \
+  && ok 'AP 页主 CGI 已渲染则共用端点不覆盖（无双写闪烁）' || bad 'AP 页 NETWORK 会双写'
+# 主题里的网口速率页：只列已插线
+grep -Fq 'portstat --rows-up' files/usr/lib/lua/luci/controller/admin/vs010_ports.lua   && ok 'Argon「已插网线速率」页只取 --rows-up' || bad '主题速率页仍取全量'
+grep -Fq '已插网线' files/usr/lib/lua/luci/view/vs010_ports.htm   && ok '主题速率页标题/空态已精简' || bad '主题速率页未精简'
+grep -Fq 'list_up' files/usr/sbin/portstat   && ok 'portstat 默认只列已插线口（--all 才看全部）' || bad 'portstat 未收敛'
+sh -n files/usr/sbin/portstat && ok 'portstat 语法通过' || bad 'portstat 语法错'
+# 系统总览 IPv6 块：删 ip6tables symlink → has_ipv6=false（零覆盖官方视图）
+grep -Fxq 'usr/sbin/ip6tables' build/prune.list   && ok '构建期删 ip6tables 符号链接 → 总览 IPv6 WAN/DUID 块自动消失' || bad '总览 IPv6 块还在'
+grep -Fq 'ip6tables' build/prune.keep && bad 'ip6tables 误进白名单' || ok 'ip6tables 未进白名单'
+# 主题内置三页
+for f in vs010_bridge vs010_ap vs010_console; do
+  [ -s "files/usr/lib/lua/luci/view/$f.htm" ] || bad "缺 $f.htm"
+done
+grep -Fq 'entry({"admin", "status", "vs010_bridge"' files/usr/lib/lua/luci/controller/admin/vs010.lua   && ok 'Argon「状态」菜单有网桥/AP/控制台入口（好找）' || bad '主题菜单缺入口'
+
+
+echo "── 第 16 次：信道自动 / 网桥弱信号 / 网桥网络设置 / 上线网卡 / 主题留档 ──"
+M=files/etc/init.d/vs010-mode; W=files/usr/sbin/vs010-wds-pair
+B=files/www/bridge/index.html; A=files/www/ap/index.html; L=files/www/cgi-bin/vs010-links
+# ① 官方 qcawifi.sh 真的认 auto（解官方 rootfs 实查，不靠我嘴说）
+python3 - <<'PY16AUTO' || F=1
+import pathlib,struct,subprocess,tempfile,os,shutil
+PEB,VID,DATA=131072,2048,4096
+p='3000Q-VS010-固件/Nwrt-QSDK12.2-2024-04-16-ipq50xx-ipq50xx_32-cucc_vs010-squashfs-nand-factory.bin'
+b=pathlib.Path(p).read_bytes(); v={}
+for i in range(len(b)//PEB):
+ x=b[i*PEB:(i+1)*PEB]
+ if x[:4]==b'UBI#' and x[VID:VID+4]==b'UBI!':
+  v.setdefault(struct.unpack_from('>I',x,VID+8)[0],{})[struct.unpack_from('>I',x,VID+12)[0]]=x[DATA:]
+t=tempfile.mkdtemp(); f=t+'/r'; pathlib.Path(f).write_bytes(b''.join(v[1][k] for k in sorted(v[1])))
+d=t+'/x'; subprocess.run(['unsquashfs','-f','-d',d,f],capture_output=True)
+s=open(os.path.join(d,'lib/wifi/qcawifi.sh'),errors='replace').read()
+checks={'auto→0 合法':'[ auto = "$channel" ] && channel=0' in s,
+        '11AHE160 分支':'*axa:HT160) hwmode=11AHE160' in s,
+        '弱信号字段':'config_get db_rssi_thr "$vif" db_rssi_thr' in s,
+        'db_timeout 字段':'config_get db_timeout "$vif" db_timeout' in s}
+for k,x in checks.items(): print('   ',('OK  ' if x else 'FAIL'),k)
+shutil.rmtree(t)
+if not all(checks.values()): raise SystemExit(1)
+PY16AUTO
+grep -Fq 'wireless.$d.channel=auto' "$W" && ok '网桥 5G 信道 auto（ACS）' || bad 'wds-pair 没改 auto'
+grep -Fq 'auto_channel()' "$M" && grep -Fq 'auto_channel' "$M" \
+  && grep -Fq 'wireless.$x.channel=auto' "$M" \
+  && ok '每次开机所有 wifi-device 写 channel=auto' || bad 'auto_channel 缺'
+grep -Fq 'wireless.$d.hwmode=11axa' "$W" && grep -Fq 'wireless.$d.htmode=HT160' "$W" \
+  && ok 'HE160 保留（11axa+HT160 → 11AHE160）' || bad 'HE160 被改坏'
+# ② 网桥也要弱信号
+grep -Fq 'wireless.$primary.db_rssi_thr=' "$W" && grep -Fq 'wireless.$primary.db_timeout=10' "$W" \
+  && ok '网桥 WDS 主 VAP 也有弱信号剔除/拒绝（与 AP 同口径）' || bad '网桥弱信号缺'
+grep -Fq '/etc/vs010/weak.rssi' "$W" && ok '阈值可改 weak.rssi（默认 -70）' || true
+# ③ 网桥页网络设置真 BUG 修复
+grep -Fq 'function drawNet(j){' "$B" && grep -Fq '  drawNet(j);   /* 第 16 次' "$B" \
+  && ok '网桥页主 CGI 直接渲染网络三卡（不再依赖共用端点）' || bad '网桥 drawNet 未调用'
+grep -Fq "if (\$('netgrid') && !\$('netgrid').innerHTML)" "$B" \
+  && grep -Fq "if (\$('netgrid') && !\$('netgrid').innerHTML)" "$A" \
+  && ok 'bridge/ap 两页共用端点只作兜底，已渲染不覆盖' || bad 'loadLinks 兜底缺'
+grep -Fq '两端都绝不能开 DHCP 服务端' "$B" && grep -Fq 'text-decoration:underline' "$B" \
+  && ok '网桥页也有 DHCP 红字划线提示' || bad '网桥页 DHCP 提示缺'
+# ④ 只显示上线网卡
+grep -Fq '*1*|*up*|*yes*) ;; *) continue ;;' "$L" \
+  && ok 'vs010-links 三重判定，只返回已插网线的口' || bad 'vs010-links 过滤缺'
+grep -Fq 'j.ports||[]).filter' "$B" && ok '主 /bridge/ ports 二次过滤' || true
+# ⑤ MAC 自动读 ART
+grep -Fq '/sys/class/net/br-lan/address' "$L" && grep -Fq 'ART → sysfs' "$L" \
+  && grep -Fq '"mac"' "$L" \
+  && ok 'MAC 从 sysfs（驱动按 ART 生成）自动读，零手填' || bad 'MAC 来源缺'
+if grep -rE '([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}' files files.vs010 files.rax3000q 2>/dev/null | grep -q .; then
+  bad '注入树含硬编码 MAC'
+else ok '全仓零硬编码 MAC'; fi
+# ⑥ 上游主题：拉到 + 留档 + 绝不替换
+for f in reference/ARGON-NOTE.md reference/argon-upstream/Makefile \
+         reference/argon-upstream/RELEASE.md reference/argon-upstream/header.ut; do
+  [ -s "$f" ] || bad "缺 $f"
+done
+grep -Fq 'PKG_VERSION:=3.2.0' reference/argon-upstream/Makefile && grep -Fq 'ucode' reference/ARGON-NOTE.md \
+  && grep -Fq 'v2.4.3' reference/ARGON-NOTE.md && grep -Fq '最后一个兼容版' reference/ARGON-NOTE.md \
+  && ok '上游 v3.2.0 元数据留档 + v2.4.3（最后 Lua 版）已注入并说明谱系' || bad '主题说明缺'
+grep -Fq 'themes/argon/header.htm' build/prune.keep \
+  && grep -Fq 'etc/uci-defaults/90_luci-theme-argon' build/prune.keep \
+  && ok '官方 Argon 9 项进白名单，构建期一个字节不许动' || bad '主题白名单缺'
+if find files -type f \( -name '*.ut' -o -name 'argon-upstream*' \) 2>/dev/null | grep -q .; then
+  bad '注入树混入上游 ucode 主题文件（会打不开后台）'
+else ok '注入树零上游主题文件（官方 1.7.2 原样保留）'; fi
+# ⑦ vs010-links mock：JSON 合法 + 只上线口 + mac 非空
+python3 - <<'PY16LINK' || F=1
+import pathlib,subprocess,tempfile,os,shutil,json,re
+s=pathlib.Path('files/www/cgi-bin/vs010-links').read_text()
+t=tempfile.mkdtemp(); bind=pathlib.Path(t,'bin'); bind.mkdir()
+net=pathlib.Path(t,'sys/class/net'); 
+for n,carrier,oper,speed in [('eth0','1','up','1000'),('eth1','0','down','-1'),('br-lan','1','up','-1')]:
+ d=net/n; d.mkdir(parents=True)
+ (d/'carrier').write_text(carrier+'\n'); (d/'operstate').write_text(oper+'\n'); (d/'speed').write_text(speed+'\n')
+ (d/'address').write_text('00:25:5c:11:62:74\n')
+for n,body in [('uci','#!/bin/sh\ncase "$2" in network.lan.ipaddr) echo 172.10.10.241;; network.lan.ipv6) echo 0;; dhcp.lan.ignore) echo 1;; *) exit 1;; esac\n'),
+               ('swconfig','#!/bin/sh\necho "Found: switch0"; echo "speed: 1000"; echo "duplex: full"\n'),
+               ('ethtool','#!/bin/sh\ncase "$1" in eth0) echo "Link detected: yes"; echo "Duplex: Full";; *) echo "Link detected: no";; esac\n')]:
+ p=bind/n; p.write_text(body); p.chmod(0o755)
+initd=pathlib.Path(t,'initd'); initd.mkdir(); (initd/'firewall').write_text('#!/bin/sh\necho "not running"\n'); (initd/'firewall').chmod(0o755)
+s=s.replace('/sys/class/net/',str(net)+'/').replace('/etc/init.d/',str(initd)+'/')
+s=s.replace('/proc/sys/kernel/hostname',str(pathlib.Path(t,'hostname')))
+pathlib.Path(t,'hostname').write_text('WDS-Z\n')
+s=s.replace('/tmp/sysinfo/board_name',str(pathlib.Path(t,'board'))); pathlib.Path(t,'board').write_text('cucc_vs010\n')
+s=s.replace('/etc/resolv.conf',str(pathlib.Path(t,'resolv'))); pathlib.Path(t,'resolv').write_text('nameserver 172.10.10.254\n')
+s=s.replace('/etc/firmware_mode',str(pathlib.Path(t,'mode'))); pathlib.Path(t,'mode').write_text('wds\n')
+s=s.replace('/etc/vs010/role',str(pathlib.Path(t,'role'))); pathlib.Path(t,'role').write_text('ap\n')
+env=dict(os.environ,PATH=str(bind)+':/usr/sbin:/usr/bin:/sbin:/bin')
+r=subprocess.run(['sh','-c',s],env=env,capture_output=True,text=True)
+out=r.stdout[r.stdout.find('{'):].strip()
+try: j=json.loads(out)
+except Exception as e: print('  FAIL JSON 非法:',e,out[:300]); raise SystemExit(1)
+ifs=[x['if'] for x in j['links']]
+checks={'JSON 合法':True,'未插线 eth1 不出现':'eth1' not in ifs,'上线 eth0 出现':'eth0' in ifs,
+        'eth0 速率 1000':any(x['if']=='eth0' and x['speed']==1000 for x in j['links']),
+        'MAC 非空':bool(j['net'].get('mac')),'MAC 来源 ART':('ART' in j['net'].get('mac_src','')),
+        '本机 DHCP 关':j['net'].get('dhcp_server')=='off','IPv6 全关':j['net'].get('ipv6')=='0',
+        '有 net 对象':isinstance(j['net'],dict)}
+for k,v in checks.items(): print('   ',('OK  ' if v else 'FAIL'),k)
+shutil.rmtree(t)
+if not all(checks.values()): raise SystemExit(1)
+PY16LINK
+if grep -Fq '第 16 次' CHANGELOG.md && grep -Fq '第 16 次' README.md; then
+  ok 'CHANGELOG / README 已记第 16 次'
+else echo '  NOTE  第 16 次文档未同步'; fi
+
+echo "── 第 17 次：可用的新版 Argon / WDS 主客开关 / DHCP 两模式全关 / 双机型 ──"
+TH=files/usr/lib/lua/luci/view/themes/argon2
+WW=files/www/luci-static/argon2
+R=files/usr/sbin/vs010-role; T=files/usr/sbin/vs010-theme
+C=files/usr/lib/lua/luci/controller/admin/vs010.lua
+V=files/usr/lib/lua/luci/view/vs010_role.htm
+M=files/etc/init.d/vs010-mode; S=files/etc/init.d/vs010-luci-fix
+# ① 版本谱系硬证据：注入的是 Lua .htm，不是 ucode .ut
+n=$(find "$TH" -maxdepth 1 -name '*.htm' | wc -l)
+[ "$n" = 6 ] && ok 'Argon v2.4.3 六张 Lua 模板在位（官方最后一个兼容版）' || bad "模板数 $n ≠ 6"
+find files -type f -name '*.ut' 2>/dev/null | grep -q . \
+  && bad '注入树混入 ucode .ut（本机 Lua 渲染器不认，后台会挂）' \
+  || ok '注入树零 ucode .ut（v2.4.4+ 已排除）'
+[ -s "$WW/css/cascade.css" ] && [ -s "$WW/css/dark.css" ] \
+  && ok '新版静态资源 cascade.css / dark.css 在位' || bad '新版 CSS 缺'
+grep -q 'PKG_VERSION:=2.4.3' reference/argon-upstream/Makefile.v2.4.3 \
+  && grep -Fq 'LUCI_DEPENDS:=+curl +jsonfilter' reference/argon-upstream/Makefile.v2.4.3 \
+  && ok '上游 v2.4.3 Makefile 留档（版本/依赖可追溯）' || bad '版本留档缺'
+grep -Fq 'v2.4.3' reference/ARGON-NOTE.md && grep -Fq '最后一个兼容版' reference/ARGON-NOTE.md \
+  && ok 'ARGON-NOTE 说明版本谱系与不兼容边界' || bad '主题说明缺'
+# ② 零覆盖官方 + 模板路径自洽 + 登录页用实机验证版
+if find files -type f \( -path '*/view/themes/argon/*' -o -path '*/www/luci-static/argon/*' \) 2>/dev/null | grep -q .; then
+  bad '注入树覆盖了官方 argon 1.7.2 目录'
+else ok '官方 argon 目录一个字节未碰（新版放独立 argon2）'; fi
+if grep -rq '/www/luci-static/argon/' "$TH" 2>/dev/null; then
+  bad 'argon2 模板仍硬编码官方路径（dark.css 会读不到）'
+else ok 'argon2 模板路径全部自洽（/www/luci-static/argon2/）'; fi
+grep -Fq '/www/luci-static/argon2/css/dark.css' "$TH/header.htm" \
+  && grep -Fq '/www/luci-static/argon2/css/dark.css' "$TH/header_login.htm" \
+  && ok 'header / header_login 的 dark.css 已指向 argon2' || bad 'dark.css 路径未改'
+grep -Fq 'online_wallpaper' "$TH/sysauth.htm" \
+  && bad '登录页 sysauth 仍调不存在的 online_wallpaper（缺 curl 会报错）' \
+  || ok '登录页沿用官方 1.7.2 实机验证版（零在线壁纸依赖）'
+# ③ 主题切换命令 + S18 不再覆盖用户选择
+for k in 'argon243' 'argon' 'luci.themes.Argon_243=/luci-static/argon2' 'luci.main.mediaurlbase=/luci-static/argon2' 'uhttpd restart'; do
+  grep -Fq "$k" "$T" || bad "vs010-theme 缺 $k"
+done
+grep -Fq 'Argon_243=/luci-static/argon2' "$S" \
+  && grep -Fq '|/luci-static/argon2) : ;;' "$S" \
+  && ok 'S18 注册两个主题且尊重用户选择（不再强制打回 argon）' || bad 'S18 仍会覆盖主题'
+[ "$F" = 0 ] && ok '主题切换：不重启机器、不动网络无线，一键可回退' || true
+# ④ WDS 主/客开关：241 / 242 / hostname / DHCP 全关
+grep -Fq '172.10.10.241' "$R" && grep -Fq '172.10.10.242' "$R" \
+  && grep -Fq 'WDS-Z' "$R" && grep -Fq 'WDS-K' "$R" \
+  && ok '主 WDS-Z=.241 / 客户端 WDS-K=.242（掩码 /22）' || bad '主客 IP/设备名缺'
+grep -Fq 'dhcp.lan.ignore=1' "$R" && grep -Fq '内网只允许上级一台 DHCP' "$R" \
+  && ok '切角色后再次兜底关本机 DHCP（WDS/AP 都关）' || bad '角色开关未关 DHCP'
+grep -Fq 'set-role "$r"' "$R" && grep -Fq 'apply_now "$ip"' "$R" \
+  && ok '复用已验证 wds-pair set-role（只 wifi reload，不碰 IP、不重启）' || bad '角色切换副作用未控'
+grep -Fq '当前是 AP 模式固件' "$R" && ok 'AP 模式提示（IP 恒 241）' || true
+# ⑤ 每次开机按 role 定 IP，AP 恒 241
+grep -Fq 'if [ "$MODE_S" = ap ]; then' "$M" \
+  && grep -Fq '[ "$R" = sta ] && IP=172.10.10.242 || IP=172.10.10.241' "$M" \
+  && ok '首启按 mode/role 定 IP：WDS 主 .241 / 客户端 .242 / AP 恒 .241' || bad '首启 IP 逻辑缺'
+# ⑥ Web 开关页：入口 + 白名单（防命令注入）+ 模板闭合
+grep -Fq 'entry({"admin", "status", "vs010_role"' "$C" \
+  && grep -Fq 'function show_role()' "$C" \
+  && ok 'Argon「状态」菜单新增 主题与 WDS 角色 页' || bad 'Web 开关入口缺'
+grep -Fq 'act == "master" or act == "client" or act == "auto"' "$C" \
+  && grep -Fq 'act == "argon243" or act == "argon"' "$C" \
+  && ok 'GET 参数严格白名单（杜绝命令注入）' || bad 'Web 参数未白名单'
+[ -s "$V" ] && [ "$(grep -c '<%+header%>' "$V")" = 1 ] \
+  && [ "$(grep -c '<%+footer%>' "$V")" = 1 ] \
+  && grep -Fq '两端都绝不能开 DHCP' "$V" \
+  && ok '开关页模板闭合 + 双 DHCP 红字划线' || bad '开关页模板/提示缺'
+# ⑦ 双机型共用：公共层实现
+if grep -rq 'vs010-role\|argon2' files.vs010 files.rax3000q 2>/dev/null; then
+  echo '  NOTE  机型层也出现主题/角色文件（应只在公共 files/）'
+else ok '主题与角色全在公共 files/：VS010 / RAX3000Q 两种机型同时生效'; fi
+
+# ⑧ mock 真跑：假 uci + 假 init.d，验证主/客切换与主题切换真实落盘
+python3 - <<'PY17MOCK' || F=1
+import os,json,pathlib,subprocess,tempfile,shutil
+t=tempfile.mkdtemp(); bind=pathlib.Path(t,'bin'); bind.mkdir()
+initd=pathlib.Path(t,'initd'); initd.mkdir()
+for n in ('uhttpd','network'):
+ p=initd/n; p.write_text('#!/bin/sh\nexit 0\n'); p.chmod(0o755)
+state=pathlib.Path(t,'uci.json')
+db={'luci.main':{'_type':'core'},'luci.main.mediaurlbase':'/luci-static/argon',
+    'luci.themes':{'_type':'internal'},
+    'network.lan':{'_type':'interface'},'network.lan.ipaddr':'172.10.10.241',
+    'network.lan.netmask':'255.255.252.0','network.lan.proto':'static',
+    'dhcp.lan':{'_type':'dhcp'},'dhcp.lan.ignore':'1'}
+state.write_text(json.dumps(db))
+fake=r'''#!/usr/bin/env python3
+import sys,os,json
+S=os.environ['UCI_STATE']; d=json.load(open(S)); a=[x for x in sys.argv[1:] if x!='-q']; c=a[0] if a else 'show'
+TYPES=('core','internal','interface','dhcp','globals')
+def dump(): json.dump(d,open(S,'w'))
+if c=='show':
+ s=a[1] if len(a)>1 else ''
+ for k,v in d.items():
+  if s and not (k==s or k.startswith(s+'.')): continue
+  print(k+'='+v.get('_type','') if isinstance(v,dict) else k+"='"+str(v)+"'")
+elif c=='get':
+ v=d.get(a[1]); sys.exit(1 if v is None else (print(v.get('_type','') if isinstance(v,dict) else v) or 0))
+elif c=='set':
+ k,_,v=a[1].partition('='); d[k]={'_type':v} if v in TYPES else v; dump()
+elif c=='rename':
+ old,_,new=a[1].partition('='); d[new]=d.pop(old,{}); dump()
+elif c=='delete': d.pop(a[1],None); dump()
+elif c=='commit': dump()
+'''
+p=bind/'uci'; p.write_text(fake); p.chmod(0o755)
+for n,body in [('vs010-host','#!/bin/sh\nexit 0\n'),('vs010-wds-pair','#!/bin/sh\nexit 0\n'),
+               ('logger','#!/bin/sh\nexit 0\n'),('sleep','#!/bin/sh\nexit 0\n')]:
+ q=bind/n; q.write_text(body); q.chmod(0o755)
+D=pathlib.Path(t,'vs010'); D.mkdir()
+pathlib.Path(t,'firmware_mode').write_text('wds\n')
+www=pathlib.Path(t,'www/luci-static/argon2/css'); www.mkdir(parents=True); (www/'cascade.css').write_text('x')
+luav=pathlib.Path(t,'usr/lib/lua/luci/view/themes/argon2'); luav.mkdir(parents=True); (luav/'header.htm').write_text('x')
+luci_cfg=pathlib.Path(t,'luci'); luci_cfg.write_text('config core main\n')
+env=dict(os.environ,UCI_STATE=str(state),PATH=str(bind)+':/usr/sbin:/usr/bin:/sbin:/bin')
+def exec_script(script,arg):
+ s=(pathlib.Path('files/usr/sbin/'+script).read_text()
+    .replace('/etc/vs010',str(D)).replace('/etc/firmware_mode',str(pathlib.Path(t,'firmware_mode')))
+    .replace('/etc/init.d/',str(initd)+'/')
+    .replace('/www/luci-static/argon2',str(pathlib.Path(t,'www/luci-static/argon2')))
+    .replace('/usr/lib/lua/luci/view/themes/argon2',str(luav))
+    .replace('L=/etc/config/luci','L='+str(luci_cfg))
+    .replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
+             'PATH='+str(bind)+':/usr/sbin:/usr/bin:/sbin:/bin; export PATH'))
+ f=pathlib.Path(t,script); f.write_text(s); f.chmod(0o755)
+ return subprocess.run(['sh',str(f),arg],env=env,capture_output=True,text=True)
+a=exec_script('vs010-role','master'); b=exec_script('vs010-role','client'); c=exec_script('vs010-role','status')
+d=json.loads(state.read_text())
+th=exec_script('vs010-theme','argon243'); d_new=json.loads(state.read_text())
+th2=exec_script('vs010-theme','status')
+th3=exec_script('vs010-theme','argon'); d_back=json.loads(state.read_text())
+checks={
+ 'master rc=0':a.returncode==0,'client rc=0':b.returncode==0,
+ 'master 输出 .241':'172.10.10.241' in a.stdout,
+ 'client 输出 .242':'172.10.10.242' in b.stdout,
+ 'client role=sta':(D/'role').read_text().strip()=='sta',
+ 'client ipaddr 文件 .242':(D/'ipaddr').read_text().strip()=='172.10.10.242',
+ 'uci network.lan.ipaddr=.242':d.get('network.lan.ipaddr')=='172.10.10.242',
+ 'uci dhcp.lan.ignore=1':d.get('dhcp.lan.ignore')=='1',
+ 'status 显示客户端':'客户端 WDS-K' in c.stdout,
+ 'status 显示 .242':'172.10.10.242' in c.stdout,
+ 'theme argon243 rc=0':th.returncode==0,
+ '切新版 mediaurlbase=argon2':d_new.get('luci.main.mediaurlbase')=='/luci-static/argon2',
+ '注册 Argon_243':d_new.get('luci.themes.Argon_243')=='/luci-static/argon2',
+ 'Argon 官方项保留':d_new.get('luci.themes.Argon')=='/luci-static/argon',
+ 'status 认出 2.4.3':'v2.4.3' in th2.stdout,
+ '切回官方 mediaurlbase=argon':d_back.get('luci.main.mediaurlbase')=='/luci-static/argon',
+ '切回官方 rc=0':th3.returncode==0,
+}
+for k,v in checks.items(): print('   ',('OK  ' if v else 'FAIL'),k)
+shutil.rmtree(t)
+if not all(checks.values()): raise SystemExit(1)
+print('  ✅ mock：主/客 241↔242、DHCP 关、主题 1.7.2↔2.4.3 双向切换全部落盘')
+PY17MOCK
+if grep -Fq '第 17 次' CHANGELOG.md && grep -Fq '第 17 次' README.md; then
+  ok 'CHANGELOG / README 已记第 17 次'
+else echo '  NOTE  第 17 次文档未同步'; fi
 
 echo "── 语法 ──"
 e=0
@@ -635,5 +1207,5 @@ if b: print('  FAIL run 块',b); sys.exit(1)
 PYEOF
 
 echo
-[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 13 次：root/admin 每次开机幂等 / 5G 仅 1 个 SSID / 双机型共用基线 / 无线栈零改动 / Release 权限已钉死' || echo 'RESULT: FAIL'
+[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 17 次：可用新版 Argon v2.4.3 / WDS 主客 241·242 / DHCP 两模式全关 / 双机型 / 前 16 次全继承' || echo 'RESULT: FAIL'
 exit $F

@@ -4,7 +4,7 @@
 module("luci.controller.admin.vs010_ports", package.seeall)
 
 function index()
-    entry({"admin", "status", "vs010_ports"}, call("show"), _("网口速率"), 90)
+    entry({"admin", "status", "vs010_ports"}, call("show"), _("已插网线速率"), 90)
 end
 
 function show()
@@ -12,7 +12,7 @@ function show()
     local tpl = require "luci.template"
     local rows = {}
     local ok, raw = pcall(function()
-        return sys.exec("/usr/sbin/portstat --rows 2>/dev/null")
+        return sys.exec("/usr/sbin/portstat --rows-up 2>/dev/null")
     end)
     if ok and raw then
         for line in tostring(raw):gmatch("[^\r\n]+") do

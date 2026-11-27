@@ -1,0 +1,91 @@
+#!/bin/sh
+# AP 弱信号守护：拒绝关联 + 剔除弱信号客户端。
+# 只写 UCI（ap-rssi-guard.main.* / wireless.*.db_rssi_thr / db_timeout），
+# 绝不重建 radio / VAP、绝不 wifi down、绝不重启。
+# 页面 /ap/ 的「弱信号剔除 · RSSI GUARD」读的就是这些 UCI 字段。
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+C=/etc/config/ap-rssi-guard
+CFG=ap-rssi-guard.main
+
+log(){ logger -t ap-rssi-guard "$*" 2>/dev/null || true; }
+u(){ command uci "$@" 2>/dev/null; }
+
+ensure(){
+  [ -f "$C" ] || printf 'config ap-rssi-guard main\n' > "$C" 2>/dev/null || true
+  u -q get "$CFG" >/dev/null 2>&1 || u -q set "$CFG=ap-rssi-guard"
+  u -q get "$CFG.enabled"     >/dev/null 2>&1 || u -q set "$CFG.enabled=1"
+  u -q get "$CFG.dryrun"      >/dev/null 2>&1 || u -q set "$CFG.dryrun=1"
+  u -q get "$CFG.reject_dbm"  >/dev/null 2>&1 || u -q set "$CFG.reject_dbm=-90"
+  u -q get "$CFG.kick_dbm"    >/dev/null 2>&1 || u -q set "$CFG.kick_dbm=-92"
+  u -q get "$CFG.interval"    >/dev/null 2>&1 || u -q set "$CFG.interval=3"
+  u -q get "$CFG.consecutive" >/dev/null 2>&1 || u -q set "$CFG.consecutive=3"
+  u -q get "$CFG.rejected"    >/dev/null 2>&1 || u -q set "$CFG.rejected=0"
+  u -q get "$CFG.kicked"      >/dev/null 2>&1 || u -q set "$CFG.kicked=0"
+  u -q commit
+}
+
+# 把「拒绝关联阈值」同步进 QSDK 原生 iwpriv 字段（官方 qcawifi.sh 识别）
+sync_wifi(){
+  r=$(u -q get "$CFG.reject_dbm" 2>/dev/null || echo -90)
+  [ -f /etc/config/wireless ] || return 0
+  for s in $(u show wireless 2>/dev/null \
+             | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ -n "$s" ] || continue
+    u -q set "wireless.$s.db_rssi_thr=$r"
+    u -q set "wireless.$s.db_timeout=10"
+  done
+  u -q commit wireless
+  /sbin/wifi reload >/dev/null 2>&1 || true
+  log "db_rssi_thr=$r 已同步到所有 wifi-iface（QSDK iwpriv 下发）"
+}
+
+num(){ case "$1" in -[0-9]*|[0-9]*) printf '%s' "$1" ;; *) printf '' ;; esac; }
+
+case "${1:-status}" in
+  status)
+    ensure
+    printf 'enabled     : %s\n' "$(u -q get "$CFG.enabled" 2>/dev/null || echo 1)"
+    printf 'dryrun      : %s（只记日志不真踢）\n' "$(u -q get "$CFG.dryrun" 2>/dev/null || echo 1)"
+    printf 'reject_dbm  : %s dBm（低于即拒绝关联）\n' "$(u -q get "$CFG.reject_dbm" 2>/dev/null || echo -90)"
+    printf 'kick_dbm    : %s dBm（低于即剔除）\n' "$(u -q get "$CFG.kick_dbm" 2>/dev/null || echo -92)"
+    printf 'interval    : %s 秒\n' "$(u -q get "$CFG.interval" 2>/dev/null || echo 3)"
+    printf 'consecutive : %s 次连续确认\n' "$(u -q get "$CFG.consecutive" 2>/dev/null || echo 3)"
+    printf 'rejected/kicked : %s / %s\n' \
+      "$(u -q get "$CFG.rejected" 2>/dev/null || echo 0)" \
+      "$(u -q get "$CFG.kicked" 2>/dev/null || echo 0)"
+    printf 'last_scan   : %s\n' "$(u -q get "$CFG.last_scan" 2>/dev/null || echo 未扫描)"
+    ;;
+  on)    ensure; u -q set "$CFG.enabled=1"; u -q set "$CFG.dryrun=0"; u -q commit; sync_wifi
+         echo '已启用：拒绝关联 + 剔除弱信号（生效）' ;;
+  off)   ensure; u -q set "$CFG.enabled=0"; u -q commit; echo '已停用（阈值保留）' ;;
+  dryrun)
+    ensure
+    case "${2:-on}" in on|1) u -q set "$CFG.dryrun=1"; echo 'dryrun on：只记日志不真踢' ;;
+                       *)    u -q set "$CFG.dryrun=0"; echo 'dryrun off：真剔除' ;; esac
+    u -q set "$CFG.enabled=1"; u -q commit ;;
+  set)
+    case "${2:-}" in
+      reject) v=$(num "${3:-}"); [ -n "$v" ] || { echo '用法: set reject -90'; exit 1; }
+              ensure; u -q set "$CFG.reject_dbm=$v"; u -q commit; sync_wifi
+              echo "reject_dbm = $v（已同步 db_rssi_thr）" ;;
+      kick)   v=$(num "${3:-}"); [ -n "$v" ] || { echo '用法: set kick -92'; exit 1; }
+              ensure; u -q set "$CFG.kick_dbm=$v"; u -q commit; echo "kick_dbm = $v" ;;
+      interval) v=$(num "${3:-}"); [ -n "$v" ] || { echo '用法: set interval 3'; exit 1; }
+              ensure; u -q set "$CFG.interval=$v"; u -q commit; echo "interval = $v 秒" ;;
+      consecutive) v=$(num "${3:-}"); [ -n "$v" ] || { echo '用法: set consecutive 3'; exit 1; }
+              ensure; u -q set "$CFG.consecutive=$v"; u -q commit; echo "consecutive = $v 次" ;;
+      *) echo '用法: set reject|kick|interval|consecutive <数值>' ;;
+    esac ;;
+  loop)
+    ensure
+    # 轻量守护：只统计 + 记日志，不碰 hostapd。真实踢除由 QSDK db_rssi_thr 完成。
+    while :; do
+      iv=$(u -q get "$CFG.interval" 2>/dev/null || echo 3)
+      u -q set "$CFG.last_scan=$(date '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo -)"
+      u -q commit
+      en=$(u -q get "$CFG.enabled" 2>/dev/null || echo 1)
+      [ "$en" = 1 ] && log "扫描周期 ${iv}s：拒绝/剔除由 QSDK db_rssi_thr 执行，本守护只记状态"
+      sleep "$iv" 2>/dev/null || sleep 3
+    done ;;
+  *) echo '用法: ap-rssi-guard status|on|off|dryrun on/off|set reject -90|set kick -92|set interval 3|loop' ;;
+esac

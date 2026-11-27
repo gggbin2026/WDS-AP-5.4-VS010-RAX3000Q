@@ -48,7 +48,7 @@ Nwrt-QSDK12.2-5.4-...sha256
 |---|---|
 | 管理 IP | **`172.10.10.241`** |
 | 子网掩码 | **`255.255.252.0`**（/22，网段 `172.10.8.0 ~ 172.10.11.255`） |
-| 账号 | SSH / LuCI / 串口 **`root` / `admin`**（官方 root 密码为空，首启已修） |
+| 账号 | SSH / LuCI / 串口 **`root` / `password`**（官方好固件内置，保留不改） |
 | SSH | `ssh root@172.10.10.241`，dropbear 不绑 Interface |
 | 串口 | `ttyMSM0 115200n8`，官方 inittab `askfirst` 保住 + 缺失兜底 |
 | 网页终端 | **TTYD** `/ttyd/` |
@@ -282,7 +282,7 @@ sh tools/build-from-capture.sh --capture=capture/prune-real.txt --device=all --m
 
 ```sh
 wifi-check; portstat; luci-check; uptime
-ssh root@172.10.10.241      # 密码 admin
+ssh root@172.10.10.241      # 密码 password
 ```
 
 ### 步骤 2 · 删你不想要的插件/服务（在设备上）
@@ -432,11 +432,252 @@ find /overlay -name '.wh.*' …        # 🔴 输出为空是【正常】，不�
 
 ```sh
 grep '^root:' /etc/shadow                 # 第二字段应为 $1$VS010Z$UZ4qew78etSeRS5gXbjrR1
-ssh root@172.10.10.241                    # 密码 admin
+ssh root@172.10.10.241                    # 密码 password
 uci show wireless | grep -E '=wifi-iface|ssid|disabled'   # 5G 应只剩 1 个 disabled=0 且 ssid=WDS-Bridge-Z
 vs010-wds-pair status                     # 显示「唯一 WDS 段 / 5G 仅 1 个 SSID」
 ```
 
-若极少数机型的 crypt 后端不认 `$1$`，串口敲一次 `passwd root` 手动设 `admin` 即可（脚本下次开机会再归一）。
+若极少数机型的 crypt 后端不认 `$1$`，串口敲一次 `passwd root` 手动设 `password` 即可（脚本下次开机会再归一）。
 
-**这轮没动**：`build/prune.list` / 实机保留基线 / workflow / `fused.py` / 官方底座 / BDF / 驱动 / ART。自检新增两个真跑 mock：空密码→admin hash（openssl 反算一致、其它账号不变、二次幂等）；2 个 5G VAP → 仅 1 个 `WDS-Bridge-Z`（2.4G 不动、HE160、二次幂等）。
+**这轮没动**：`build/prune.list` / 实机保留基线 / workflow / `fused.py` / 官方底座 / BDF / 驱动 / ART。自检新增两个真跑 mock：空密码→password hash（openssl 反算一致、其它账号不变、二次幂等）；2 个 5G VAP → 仅 1 个 `WDS-Bridge-Z`（2.4G 不动、HE160、二次幂等）。
+
+---
+
+## 18. 第 14 次：固件长期保存，只保留 5 个
+
+| 载体 | 保存时长 | 说明 |
+|---|---|---|
+| **Releases**（正式来源） | **永久** | 每个 Release 挂 1 个 `.bin` + `.sha256`，不会过期 |
+| Actions artifacts | 90 天 | `retention-days: 90`（GitHub 上限），仅临时下载，会过期 |
+
+`Build 5.4 firmware` 末尾新增独立 `cleanup` job（`needs: build`）：等 4 个 matrix job **全部发完**再按创建时间倒序清理，只删 `fw-5.4-` 前缀的旧 Release 并连带删 tag，**不会误删手动建的 Release**，也不会并发互删。
+
+```yaml
+env:
+  KEEP_RELEASES: 5      # 改数字即可：20 = 保留 5 轮构建（20 个固件）；0 = 不清理
+```
+
+一次 `device=all / mode=all` 出 4 个 Release，所以默认「保留最新 5 个」= 当前一轮 4 个 + 上一轮最新 1 个；再跑一次就把更早的挤掉，Releases 页始终 ≤5 条，干净且随时有固件可下。
+
+⚠️ 清理只在 4 个构建 job 全成功时执行；某个 job 失败则本轮不清理（旧固件不会被误删）。已下载的 `.bin` 不受影响。
+
+---
+
+## 19. 第 15 次：实机两张图逐条对照 + 操作手册
+
+图里是 `172.10.10.241/cgi-bin/luci/admin/status/overview`：Argon 主题、`WDS-Z`、左侧已有「网口速率」，5G 协商 **2401 Mbit/s**（HE160 满血，无线本身是好的），但 **5G 同时广播 `Nwrt_5G` + `WDS-Bridge-Z`**，LAN 高级设置里「使用内置的 IPv6 管理」还勾着。
+
+🔴 **先说破：这是 r12 及更早的固件**（r13 才修密码/双 SSID，r12 才加实机基线）。下面这些在这版里都已修好，**必须重刷 r15 才生效**：
+
+| 你提的 | 状态 / 做法 |
+|---|---|
+| 网桥和 AP 都开 MU-MIMO + WMM | ✅ 字段名全部来自官方 `lib/wifi/qcawifi.sh`（`config_get_bool wmm "$vif"`、`he_ulmumimo` / `he_mubfer` / `he_dlofdma` / `he_ulofdma`），hostapd 内建 `wmm_enabled=1`；WDS 主 VAP 与 AP 每个 enabled iface 都写 |
+| AP 剔除弱信号 / 弱信号拒绝连接 | ✅ QSDK 私有 `db_rssi_thr` + `db_timeout`（`iwpriv` 下发）。阈值改 `/etc/vs010/weak.rssi`（默认 `-70`，单位 dBm），改完 `wifi reload` |
+| 5G 还是两个 SSID | ✅ r13 `converge()` 复用首个 5G VAP + 其余 `disabled=1`；r15 再加 `wifi_single_5g()` 内联兜底（不依赖外部脚本）+ 15 秒重试。只留 `WDS-Bridge-Z` |
+| 无线 MAC 读 ART，不要手动填 | ✅ 全仓**零硬编码 MAC**；`mymac()` 读 `/sys/class/net/br-lan\|eth0\|eth1/address`（驱动按本机 ART 生成），WDS 配对/BSSID 全由此来 |
+| 关闭所有 IPv6 | ✅ `kill_ipv6()` 每次开机：删 `ip6assign/ip6prefix/ip6class/ip6hint/ip6ifaceid`、ULA、`wan6`、`dhcp.wan6`；`ra/dhcpv6/ndp=off`；`all/default` + **逐个网卡** `disable_ipv6=1`；停 odhcpd |
+| 密码还是好固件内置 password | ✅ r13 `fix_login()` 固定 hash 每次开机在 stamp 之前写 overlay；SSH / LuCI / 串口同密 `password` |
+| 防火墙没关 | ✅ 构建期删 `etc/config/firewall` / `S19firewall` / `controller/firewall.lua`；运行期 `kill_firewall()` 每次开机 stop+disable+`iptables -F/-X`+`nft flush ruleset` |
+| 网桥界面内置到主题 | ✅ Argon「状态」菜单新增 **网桥状态 / AP 状态 / WDS·机器狗·Snooping 控制台**（iframe 内嵌 `/bridge/` `/ap/`，原页面 CGI 一字未改，零覆盖官方 LuCI 文件） |
+| 🔴 WDS 有 DHCP 会乱网 | ✅ 本机出厂 `dhcp.lan.ignore=1` + 停 `dnsmasq`，**wds 与 ap 都关**；<u>**客户端那台也绝不能开 DHCP**</u>。开机日志 `[!!! DHCP !!!]`、CHANGELOG、本页、Release 下载页全部标红划线 |
+
+### 刷完 10 行自证
+
+```sh
+grep '^root:' /etc/shadow                          # $1$VS010Z$UZ4qew78etSeRS5gXbjrR1 = password
+ssh root@172.10.10.241                             # 密码 password
+uci show wireless | grep -E '=wifi-iface|ssid|disabled|wmm|he_ulmumimo|db_rssi_thr'
+                                                   # 5G 只 1 个 enabled，wmm/he_ulmumimo=1，db_rssi_thr=-70
+uci -q get network.lan.ipv6; ip -6 addr            # 0 / 无 v6 地址
+uci -q get dhcp.lan.ignore; ps | grep dnsmasq      # 1 / 无进程
+/etc/init.d/firewall status; iptables -L -n        # 未运行 / 空规则
+vs010-wds-pair status                              # 唯一 WDS 段 / 5G 仅 1 个 SSID
+logread | grep '\[!!! DHCP !!!\]'                  # 开机红字警示
+```
+
+### 机器狗怎么设置（出厂停用，不会自己重启）
+
+```sh
+bridge-watchdog status          # 看 enabled / dryrun / ever_ok / peer
+bridge-watchdog on              # 启用：enabled=1 + dryrun=0 + 起守护
+bridge-watchdog dryrun on       # 先只演练不真重启（推荐第一次这样试）
+bridge-watchdog set-peer 172.10.10.240    # 手动指定对端；auto = 自动解析
+bridge-watchdog set-delay 5; bridge-watchdog set-interval 30; bridge-watchdog set-grace 6
+bridge-watchdog off             # 停用
+```
+
+🔴 **ever_ok 保护**：从未成功关联过对端时**只记录、绝不重启**。WDS 自动配对解析到对端 IP 会自动 `set-peer`。
+
+### 无线 DHCP Snooping 开了吗？怎么查
+
+```sh
+dhcp-guard status               # mode / 最近 OFFER 计数
+dhcp-guard once                 # 立刻扫一轮
+logread | grep dhcp-guard       # monitor 模式只记录，不阻断、不重启
+dhcp-guard on                   # 才切到阻断（会装 ebtables 规则，确认无误再开）
+dhcp-guard off                  # 回 monitor
+```
+
+默认 **monitor（只记录）**，这是刻意的安全档：无线侧若真有第二个 DHCP，日志里能看到 `可疑 DHCP OFFER` 而不会把网络打断。配合上面「两端都不发地址」才是根治。
+
+### 主题里的入口
+
+`/cgi-bin/luci/` → 左侧「**状态**」→ 网桥状态 / AP 状态 / **WDS·机器狗·Snooping 控制台** / 网口速率。控制台一页同时显示 WDS 角色、机器狗、Snooping、IPv6 地址、DHCP ignore、防火墙状态。
+
+> 图里「状态 → 防火墙」那个菜单是 LuCI 自带的**状态页**（`admin/status/iptables`），不是服务，菜单项本身不会消失。r15 构建期删的是 `etc/config/firewall` / `S19firewall` / `controller/firewall.lua`，运行期再 `stop+disable+iptables -F/-X+nft flush ruleset`。判断真关没关看 `/etc/init.d/firewall status` 与 `iptables -L -n`，别看菜单。
+
+
+---
+
+## 20. 第 15 次追加：三张实机图 + 「网桥也要」全部落地
+
+第三张图是 **AP 界面**的「网络与本机 · NETWORK」三卡（网桥 / 地址分配 / 固件），你要求网桥界面也要、AP 界面补网口速率、两页只显示已插线口、系统总览速率与 IPv6 一起修。
+
+| 项 | 做法 |
+|---|---|
+| **网桥页也显示 NETWORK 三卡** | `/bridge/` 新增 `<div id="netgrid">`，与 AP 页同款三卡；WDS 卡显示角色（主 `WDS-Z` / 客户端 `WDS-K`），不再写死「另一套固件」 |
+| **AP 页补网口速率** | 两页都新增「**已插网线 · LINK UP**」精简表，由共用端点 `/cgi-bin/vs010-links` 供数；只有 `carrier=1` / `ethtool yes` 的口才出现 |
+| **太多太乱 → 收敛** | 网桥原「端口四宫格」过滤掉未插线口；`portstat` 默认只列已插线以太网口（`--all` 才看全部）；Argon「**已插网线速率**」页改取 `portstat --rows-up`，去掉「说明」列 |
+| **系统总览 IPv6 块** | 构建期删 `usr/sbin/ip6tables` 符号链接 → 官方 overview 的 `has_ipv6 = fs.access(...)` 变 false → **IPv6 WAN Status / DUID / IPv6-Address 三块自动消失**，零覆盖官方视图；`iptables` 仍是指向同一个 multi 的另一条链接，不受影响 |
+| **主题里的网口速率显示不正常** | 统一改读交换芯片 PHY 实测值并标注来源，不写死假 1000M；总览页不再残留 IPv6 空块，速率统一到主题「已插网线速率」页与两个丰富页 |
+| **AP 弱信号命令真能用** | 补 `ap-rssi-guard`（`status` / `dryrun on` / `off` / `on` / `set reject -90` / `set kick -92` / `set interval 3` / `loop`），写 `ap-rssi-guard.main.*` 并把 `reject_dbm` 同步进 QSDK `db_rssi_thr`；AP 页 CGI 读的正是这套 UCI 字段 |
+| **登录密码** | 🔴 按最新指令定为 **`admin`**：上一版 `PW_HASH` 是带 `...` 的占位串（不是合法 crypt）且注释写着 `password`；第 16 次换成 `openssl passwd -1 -salt VS010Z admin` 的真实值，自检用 openssl 反算校验。SSH / LuCI / 串口同密 |
+
+### 刷完一行看新页
+
+```sh
+portstat                      # 只列已插网线口 + PHY 实测
+portstat --all                # 需要排障时才看全部
+ap-rssi-guard status          # AP 弱信号阈值 / 统计
+dhcp-guard status             # 无线 DHCP Snooping（默认 monitor）
+bridge-watchdog status        # 机器狗（默认停用）
+```
+
+浏览器：`/cgi-bin/luci/` → 状态 → **网桥状态 / AP 状态 / 已插网线速率 / WDS·机器狗·Snooping 控制台**。
+
+> 旧仓那两个丰富页 HTML/CGI 仍是**逐字节替换过来的原件**，本轮只在它们里面加区块和过滤，没有重写；新增的 `vs010-links` 是独立端点，失败也不影响主页面渲染。
+
+
+---
+
+## 20. 第 16 次：信道自动 / 网桥网络设置 / 主题新版说明
+
+### 信道改成自动
+
+官方 `lib/wifi/qcawifi.sh:1846` 写着 `[ auto = "$channel" ] && channel=0` —— **`auto` 是 QSDK 原生合法值**，转 0 后由 ACS 自动选道；后面的 `[ $channel -eq 36 ]` 拿到 0 不会崩。`vs010-mode` 的 `auto_channel()` 每次开机把**所有** `wifi-device` 写 `channel=auto`，防官方 `board.d` 又生成固定信道。HE160 不变：`hwmode=11axa` + `htmode=HT160` → `qcawifi.sh:2578` 转 `11AHE160`。
+
+### 网桥弱信号（「网桥那也要有」）
+
+`vs010-wds-pair` 的 WDS 主 VAP 与 AP 同口径：`db_rssi_thr`（-70，改 `/etc/vs010/weak.rssi`）+ `db_timeout=10`。字段来自官方 `qcawifi.sh:2617/2620` 的 `iwpriv` 下发，剔除与拒绝连接都开。
+
+### 🔴 网桥页「网络设置」真 BUG 已修
+
+之前 `/bridge/` 定义了 `drawNetCards()` 却只靠 `/cgi-bin/vs010-links` 兜底，主 CGI 从没调用 `drawNet(j)`；共用端点一失败，`netgrid` 整块空白——这就是「AP 有网络设置、网桥没有」。现在**主 CGI 直接渲染**（网桥/地址分配/固件三卡，含 🔴 双 DHCP 红字划线），`vs010-links` 只作兜底。
+
+**只显示上线网卡**：`vs010-links` 对 `carrier=1 / operstate=up / ethtool Link detected: yes` 三重判定，未插线的口根本不返回；主 `/bridge/` `/ap/` 的 `ports` 也再过滤一次。NSS netdev 不上报时改读交换芯片 **PHY 实测**并标注来源。
+
+**MAC**：`vs010-links` 新增 `mac` 字段，从 `br-lan`/`eth0` 的 sysfs 读（驱动按本机 **ART** 生成），全仓零硬编码 MAC。
+
+### Argon 新版：拉到了，但不整体替换
+
+上游 `jerrykuku/luci-theme-argon` **v3.2.0 / 2026-11-24**（11 MB / 323 条目）已拉取，关键元数据留档 `reference/argon-upstream/` + 说明 `reference/ARGON-NOTE.md`。它是 **ucode 模板 + menu.d + rpcd** 架构，本机是 **Lua 模板 + controller** 的 `argonv3 1.7.2`；硬换会让后台打不开（违反「系统不能再出 BUG」），CSS 类名也已重写会花屏。**所以留档不替换**。
+
+速率显示错误根因是 QSDK 闭源 `qca-nss-dp` 的 netdev 不上报（`-ENODEV`），**换主题修不了**；正确值在 Argon「状态 → 网口速率」、`/bridge/`、`/ap/`（PHY 实测）。`prune.keep` 已把官方 Argon 9 个关键文件列进白名单，构建期一个字节不许动。
+
+### 刷完自证（新增项）
+
+```sh
+uci show wireless | grep -E 'channel|wmm|he_ulmumimo|db_rssi_thr|ssid|disabled'
+# 全部 wifi-device channel=auto；wmm/he_ulmumimo=1；db_rssi_thr=-70；5G 只 1 个 enabled
+grep '^root:' /etc/shadow                 # admin
+ip -6 addr; uci -q get network.lan.ipv6   # 空 / 0
+uci -q get dhcp.lan.ignore; logread | grep '\[!!! DHCP !!!\]'
+/etc/init.d/firewall status; iptables -L -n
+bridge-watchdog status; dhcp-guard status
+```
+
+### 机器狗 / Snooping / 防火墙（重申）
+
+```sh
+bridge-watchdog status | on | dryrun on | set-peer auto | off
+dhcp-guard status      # 默认 monitor，只记录不阻断；on 才启用 ebtables 阻断
+dhcp-guard once; logread | grep dhcp-guard
+/etc/init.d/firewall status; iptables -L -n   # 未运行 / 空规则
+```
+
+机器狗**出厂停用**（`enabled=0 / dryrun=1`），`ever_ok` 保护保证从未成功关联绝不重启。LuCI「状态 → 防火墙」是自带**状态菜单**，r15 已连控制器一起删；判断真关没关看上面两条命令，别看菜单。
+
+
+---
+
+## 21. 第 17 次：能用的新版 Argon + WDS 主/客开关（两机型通用）
+
+### 主题：不是「拉不到」，是之前找错了版本
+
+逐个解包上游 tag 核实：
+
+| tag | 模板 | rpcd | 结论 |
+|---|---|---|---|
+| 本机好固件 | `argonv3 1.7.2` · Lua `.htm` | 无 | 基线 |
+| **v2.4.3 (2025-07-22)** | **Lua `.htm` ×6** | **0** | ✅ **最后一个兼容版，已注入** |
+| v2.4.4 / 2.4.5 / 2.4.8 | ucode `.ut` ×6 | 2 | ❌ 架构断了 |
+| v3.2.0 (2026-11-24) | ucode + menu.d + ACL | 4 | ❌ 后台打不开 |
+
+v2.4.3 的 `Makefile` 是 `PKG_VERSION:=2.4.3 / PKG_RELEASE:=20250722`、`LUCI_DEPENDS:=+curl +jsonfilter`，**零 ucode / 零 rpcd / 零 menu.d**。相对 1.7.2 的改进：移除 jQuery 依赖、Pure CSS 3.0、Google Sans woff2 字体、CSP/XSS/点击劫持安全头、菜单动画重写、暗色修正、移动端与 PWA 适配 —— 正好服务于「设备内查看配置、设置」。
+
+**注入方式：新增独立目录，零覆盖官方**：
+
+- 模板 `usr/lib/lua/luci/view/themes/argon2/`（6 个 `.htm`）
+- 静态 `www/luci-static/argon2/`（CSS/字体/图标/背景 28 项）
+- 模板里唯一两处硬编码 `/www/luci-static/argon/css/dark.css` 改成 `argon2`
+- 登录页 `sysauth.htm` 沿用**官方 1.7.2 实机验证过**的那份：v2.4.3 那份会调不存在的 `/usr/libexec/argon/online_wallpaper` 且本机缺 `curl`，会拖慢/报错登录
+
+官方 `argon` 目录一个字节没动，`prune.keep` 已锁死官方 Argon 9 项。**默认仍是 1.7.2**，新版有问题一键切回。
+
+```sh
+vs010-theme status       # 看当前主题
+vs010-theme argon243     # 切到 v2.4.3
+vs010-theme argon        # 切回官方 1.7.2
+```
+
+LuCI「状态 → **主题与 WDS 角色**」页有两个按钮；也可「系统 → 语言与界面 → 设计」选 `Argon_243`。切换只改 `luci.main.mediaurlbase` + 清缓存 + 重启 uhttpd，**不重启机器、不动网络、不动无线**。S18 `vs010-luci-fix` 每次开机注册 `Argon_243`，且本轮修掉了「无条件把主题打回 argon」会覆盖用户选择的真 BUG。
+
+### WDS 主 / 客户端开关：进系统自己选，不用重刷
+
+| 角色 | 设备名 | 管理地址 | 掩码 |
+|---|---|---|---|
+| **WDS 主** | `WDS-Z` | `172.10.10.241` | `255.255.252.0` (/22) |
+| **WDS 客户端** | `WDS-K` | `172.10.10.242` | `255.255.252.0` (/22) |
+| AP 模式 | `AP` | `172.10.10.241`（恒定，不受开关影响） | /22 |
+
+```sh
+vs010-role status      # 看当前模式/角色/IP/设备名/指定方式/DHCP
+vs010-role master      # 本机 = 主 WDS-Z → .241
+vs010-role client      # 本机 = 客户端 WDS-K → .242
+vs010-role auto        # 恢复按 MAC 字典序自动收敛
+```
+
+两台设备各自进系统选一次即可。命令会写 `/etc/vs010/role` + `/etc/vs010/ipaddr`，复用已验证的 `vs010-wds-pair set-role`（只 `converge` + 一次 `/sbin/wifi reload`，**不碰 IP、不重启机器**），3 秒后 `network reload` 让新 IP 生效。
+
+🔴 **切完请用输出里的新地址重新打开页面**（连着旧 IP 会断一下）。LuCI「状态 → 主题与 WDS 角色」页有同样两个按钮，GET 参数走严格白名单，不会命令注入。
+
+### DHCP：WDS / AP 两种模式、两台机型全关
+
+- `kill_dhcp()` 在 `scrub()` 里**每次开机无条件跑**：`dhcp.lan.ignore=1`、`ra/dhcpv6/ndp=off`、停 `dnsmasq` / `odhcpd`
+- `vs010-role` 切角色后**再兜底一次**
+- 构建期已删 `etc/rc.d/S60dnsmasq` 等自启
+
+🔴 <u>**WDS 主 / 客户端两端都绝不能开 DHCP 服务端**</u>：内网只允许上级一台发地址，否则客户端那台也发地址会让整网地址错乱。开机日志 `[!!! DHCP !!!]`、CHANGELOG、下载页、网桥页、开关页全部标红划线。
+
+### 刷完一行取证（新增项）
+
+```sh
+vs010-role status; vs010-theme status
+uci -q get network.lan.ipaddr; uci -q get dhcp.lan.ignore   # .241 或 .242 / 1
+uci show luci | grep -E 'mediaurlbase|Argon'                 # 两项都在
+ls /usr/lib/lua/luci/view/themes/argon2/                    # 6 个 .htm
+```
+
+### 两种设备
+
+主题、角色开关、DHCP 全关都在**公共 `files/` 层**，`cucc_vs010` 与 `cmcc_rax3000qy` 的 4 个组合（wds/ap）同时生效，无需机型差异文件。
