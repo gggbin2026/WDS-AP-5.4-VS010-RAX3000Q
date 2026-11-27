@@ -1,0 +1,36 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+# 只读状态 JSON：/bridge/ 与 /ap/ 两个页面共用
+echo 'Content-Type: application/json; charset=utf-8'; echo
+j(){ printf '"%s":"%s"' "$1" "$(printf '%s' "$2" | sed 's/"/\\"/g')"; }
+PORT_JSON=$(/usr/sbin/portstat --json 2>/dev/null | sed -n 's/^{"ports":\[\(.*\)\]}$/\1/p')
+[ -z "$PORT_JSON" ] && PORT_JSON=''
+RADIOS=0
+for p in /sys/class/ieee80211/phy*; do [ -d "$p" ] && RADIOS=$((RADIOS+1)); done
+BDF=0
+for f in /lib/firmware/IPQ5018/bdwlan.b10 /lib/firmware/IPQ5018/qcn6122/bdwlan.b60; do
+  [ -s "$f" ] && BDF=$((BDF+1)); done
+STACK='unknown'
+lsmod 2>/dev/null | grep -qiE 'qca_ol|wifi_3_0|ipq_cnss2' && STACK='qca-wifi 闭源 (5.4.213 满血)'
+SSIDS=$(uci show wireless 2>/dev/null | sed -n 's/.*\.ssid=//p' | tr -d "'" | tr '\n' ' ')
+TTYD='未装'
+[ -x /etc/init.d/ttyd ] && { /etc/init.d/ttyd enabled 2>/dev/null && TTYD='已启用' || TTYD='已装未启用'; }
+printf '{'
+j mode "$(cat /etc/vs010/mode 2>/dev/null || echo wds)"; printf ','
+j model "$(cat /etc/firmware_model 2>/dev/null || echo unknown)"; printf ','
+j kernel "$(uname -r 2>/dev/null || echo '?')"; printf ','
+j stack "$STACK"; printf ','
+j build "$(cat /etc/firmware_build 2>/dev/null || echo unknown)"; printf ','
+j ip "$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)"; printf ','
+j netmask "$(uci -q get network.lan.netmask 2>/dev/null || echo 255.255.252.0)"; printf ','
+j stp "$(uci -q get network.lan.stp 2>/dev/null || echo 1)"; printf ','
+j ttyd "$TTYD"; printf ','
+j ntp "$(cat /etc/vs010/ntp.interval 2>/dev/null || echo 300) 秒循环 / $(cat /etc/vs010/ntp.round 2>/dev/null || echo 0) 轮"; printf ','
+j watchdog "$(uci -q get wdsdog.main.enabled 2>/dev/null || echo 0) / dryrun=$(uci -q get wdsdog.main.dryrun 2>/dev/null || echo 1)"; printf ','
+j snooping "$(uci -q get dhcp-guard.main.mode 2>/dev/null || echo monitor) / $(cat /etc/vs010/snooping.state 2>/dev/null | tr -d '\n' || echo 待扫描)"; printf ','
+j pairing "$(cat /etc/vs010/role 2>/dev/null || echo unknown) / peer=$(cat /etc/vs010/peer 2>/dev/null || echo 未发现)"; printf ','
+j ipv6 "$(uci -q get network.lan.ipv6 2>/dev/null || echo 0)  (0=已关)"; printf ','
+j ssid "$SSIDS"; printf ','
+printf '"radios":%s,"bdf":%s,' "$RADIOS" "$BDF"
+printf '"ports":[%s]' "$PORT_JSON"
+printf '}\n'

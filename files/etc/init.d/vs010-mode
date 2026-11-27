@@ -1,0 +1,232 @@
+#!/bin/sh /etc/rc.common
+# 5.4 融合固件 · 首启业务配置（幂等；只做 uci 增量，绝不重建 radio/iface）
+# 官方 board.d/uci-defaults 生成 network/wireless 之后才跑（START=99）。
+START=99
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+STAMP=/etc/vs010/applied
+BID=$(cat /etc/firmware_build 2>/dev/null || echo unknown)
+
+log(){ logger -t vs010-mode "$*" 2>/dev/null || true; }
+uci(){ command uci "$@" 2>/dev/null; }   # 缺 uci 时静默，不刷屏
+ensure(){ # ensure <section-type> <section-name>
+  uci -q get "$2" >/dev/null 2>&1 || uci -q set "$2=$1"
+}
+setv(){ # setv <section> <option> <value>
+  [ -z "$3" ] && return 0
+  [ "$(uci -q get "$1.$2" 2>/dev/null)" = "$3" ] && return 0
+  uci -q set "$1.$2=$3"
+}
+
+# ★ 每次开机都跑（不受 applied stamp 限制）：删 WAN/WAN6 + 关 IPv6/防火墙
+#   官方 board.d 每次都会重新生成 wan/wan6，光首启删一次不够。
+scrub(){
+  MODE_S=$(cat /etc/vs010/mode 2>/dev/null || echo wds)
+  printf '%s\n' "$MODE_S" > /etc/firmware_mode 2>/dev/null || true   # 旧版 AP 状态页读
+  if uci -q get network.lan >/dev/null 2>&1; then
+    uci -q delete network.wan   2>/dev/null || true
+    uci -q delete network.wan6  2>/dev/null || true
+    uci -q delete dhcp.wan6     2>/dev/null || true
+    uci -q set network.lan.ifname='eth0 eth1'
+    uci -q set network.lan.type='bridge'
+    uci -q set network.lan.ipv6='0'
+    uci -q set network.globals.ula_prefix='' 2>/dev/null || true
+    uci -q set network.@switch[0].enable_vlan='0' 2>/dev/null || true
+    uci -q commit network 2>/dev/null || true
+  fi
+  sysctl -p /etc/sysctl.d/99-vs010-no-ipv6.conf >/dev/null 2>&1 || true
+  /etc/init.d/odhcpd   stop 2>/dev/null || true
+  /etc/init.d/odhcpd   disable 2>/dev/null || true
+  /etc/init.d/firewall stop 2>/dev/null || true
+  /etc/init.d/firewall disable 2>/dev/null || true
+  [ -x /usr/sbin/vs010-host ] && /usr/sbin/vs010-host >/dev/null 2>&1 || true
+}
+
+# ★ AP 模式 SSID 按机型区分；密码 AP123456（只改现有 wifi-iface，不重建 radio）
+set_ap_ssid(){
+  MODEL=$(cat /etc/firmware_model 2>/dev/null || echo unknown)
+  case "$MODEL" in
+    cucc_vs010|*vs010*)      SSID='VS010-AP' ;;
+    cmcc_rax3000q|*rax3000q*) SSID='RAX3000Q-AP' ;;
+    *) SSID="$(printf '%s' "$MODEL" | tr 'a-z' 'A-Z')-AP" ;;
+  esac
+  for sec in $(uci show wireless 2>/dev/null \
+               | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ -n "$sec" ] || continue
+    uci -q set "wireless.$sec.ssid=$SSID"
+    uci -q set "wireless.$sec.encryption=psk2+ccmp"
+    uci -q set "wireless.$sec.key=AP123456"
+    uci -q set "wireless.$sec.network=lan"
+    uci -q set "wireless.$sec.disabled=0"
+  done
+  uci -q commit wireless 2>/dev/null || true
+  printf '%s\n' "$SSID" > /etc/vs010/ap.ssid 2>/dev/null || true
+  log "AP SSID 按机型设置 $SSID / AP123456"
+}
+
+apply(){
+  [ "$(cat "$STAMP" 2>/dev/null)" = "$BID" ] && return 0
+  MODE=$(cat /etc/vs010/mode 2>/dev/null || echo wds)
+  case "$MODE" in wds|ap) ;; *) MODE=wds ;; esac
+
+  # ── 管理地址 / STP / WAN+LAN 全进桥 / 关 IPv6 ──────────────────
+  if uci -q get network.lan >/dev/null 2>&1; then
+    ensure interface network.lan
+    [ -n "$(uci -q get network.lan.ipaddr 2>/dev/null)" ] || setv network.lan proto static
+    IP=$(cat /etc/vs010/ipaddr 2>/dev/null || echo 172.10.10.241)
+    NM=$(cat /etc/vs010/netmask 2>/dev/null || echo 255.255.252.0)
+    setv network.lan ipaddr "$IP"
+    setv network.lan netmask "$NM"
+    setv network.lan stp 1              # ★ STP 开（网桥/AP 都防环）
+    setv network.lan type bridge
+    # ★ WAN 口与 LAN 口桥接过来：两个 GMAC 全进 br-lan，删掉 wan/wan6
+    #   VS010 官方是 ucidef_set_interfaces_lan_wan "eth1" "eth0"；
+    #   RAX3000Q 官方是 switch1 分出 1:wan。统一改成傻交换，不分 WAN。
+    setv network.lan ifname 'eth0 eth1'
+    uci -q set network.@switch[0].enable_vlan=0 2>/dev/null || true
+    uci -q delete network.wan   2>/dev/null || true
+    uci -q delete network.wan6  2>/dev/null || true
+    uci -q set network.globals.ula_prefix='' 2>/dev/null || true
+    setv network.lan ipv6 0             # ★ 关 IPv6（网口/路由都不起 v6）
+    if [ "$MODE" = ap ]; then
+      # AP：本机不做 DHCP 服务端，交给上级
+      uci -q set dhcp.lan.ignore=1 2>/dev/null || true
+    fi
+  else
+    log "network.lan 未生成，后台补跑一次"
+    ( sleep 12; sh /etc/init.d/vs010-mode apply ) >/dev/null 2>&1 &
+    return 0
+  fi
+
+  # ── 无线：只清 disabled，绝不重建 radio / iface（保住官方满血栈）──
+  uci show wireless 2>/dev/null \
+    | sed -n 's/^wireless\.\(.*\)=wifi-\(device\|iface\)$/\1/p' \
+    | while read -r s; do [ -n "$s" ] && uci -q set wireless."$s".disabled=0; done
+
+  # ★ AP 模式：SSID 按机型区分 / AP123456；WDS 模式保持 WDS-Bridge-Z（由 wds-pair 管）
+  if [ "$MODE" = ap ]; then set_ap_ssid
+  else rm -f /etc/vs010/ap.ssid 2>/dev/null || true; fi
+
+  # ── ★ 关 IPv6（uci + sysctl + 停 odhcpd）─────────────────────────
+  uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+  setv dhcp.lan ra      off
+  setv dhcp.lan dhcpv6  off
+  setv dhcp.lan ndp     off
+  uci -q delete dhcp.wan6 2>/dev/null || true
+  sysctl -p /etc/sysctl.d/99-vs010-no-ipv6.conf >/dev/null 2>&1 || true
+  /etc/init.d/odhcpd stop    2>/dev/null || true
+  /etc/init.d/odhcpd disable 2>/dev/null || true
+
+  # ── ★ 关防火墙（服务停用；纯二层桥不需要 iptables 转发）────────
+  /etc/init.d/firewall stop    2>/dev/null || true
+  /etc/init.d/firewall disable 2>/dev/null || true
+
+  # ── ★ 精简兜底：构建期已删自启链接，这里把服务再 disable 一次 ──
+  for x in autoreboot ddns ddns-go zerotier lldpd quagga dhcrelay4 \
+           pppoe-server pppoe-relay miniupnpd relayd mia cnss_diag \
+           breakpad diag_socket_app; do
+    [ -x "/etc/init.d/$x" ] && /etc/init.d/$x disable 2>/dev/null || true
+  done
+
+  # ── ★ 修复 SSH / TTYD 登录：官方 root 密码为空，首次设为 admin ────
+  if grep -q '^root::' /etc/shadow 2>/dev/null; then
+    printf 'admin\nadmin\n' | /bin/passwd root >/dev/null 2>&1 \
+      || log 'root 密码设置未生效（可串口手动 passwd root）'
+  fi
+  # dropbear 不绑 Interface（绑了会在 BOOT 阶段不建实例）
+  uci -q delete dropbear.@dropbear[0].Interface 2>/dev/null || true
+  uci -q set dropbear.@dropbear[0].PasswordAuth=on
+  uci -q set dropbear.@dropbear[0].RootPasswordAuth=on
+
+  # ── ★ 串口：官方 inittab 已有 ttyMSM0::askfirst，缺了才补（写 overlay）──
+  if ! grep -q '^ttyMSM0' /etc/inittab 2>/dev/null; then
+    printf '\nttyMSM0::askfirst:/bin/ash --login\n' >> /etc/inittab
+    kill -HUP 1 2>/dev/null || true
+    log '已补串口 getty ttyMSM0'
+  fi
+
+  # ── NTP：纯内网客户端，5 分钟循环 + 三台内网时间服务器 ──
+  ensure timeserver system.ntp
+  setv system.ntp enabled 1
+  setv system.ntp enable_server 0            # 只做客户端，不对外提供 NTP
+  uci -q delete system.ntp.server 2>/dev/null
+  uci -q add_list system.ntp.server=172.10.10.254
+  uci -q add_list system.ntp.server=172.100.10.254
+  uci -q add_list system.ntp.server=192.168.1.254
+  ensure ntp-sync ntp-sync.main
+  setv ntp-sync.main enabled 1
+  setv ntp-sync.main interval 300
+  setv ntp-sync.main timeout 25
+
+  # ── TTYD：官方已装 /usr/bin/ttyd + /etc/init.d/ttyd，只 ensure 启用 ──
+  [ -x /etc/init.d/ttyd ] && /etc/init.d/ttyd enable 2>/dev/null || true
+
+  # ── ★ 保证 Argon 主题界面不报错 ──────────────────────────────
+  #   官方 /etc/config/luci 是 `config core main`（named section）→ 不会触发
+  #   dispatcher.lua:427（旧仓是匿名段才报错）。这里只做只读兜底 + 校正主题。
+  # 按「段名」判断，不依赖 uci get 退出码；与 S18 vs010-luci-fix 同逻辑
+  sect=$(uci show luci 2>/dev/null \
+         | sed -n 's/^luci\.\([^.=]*\)=core$/\1/p' | head -n 1)
+  if [ "$sect" != main ]; then
+    if [ -n "$sect" ]; then
+      uci -q rename "luci.$sect=main"
+    else
+      uci -q set luci.main=core
+    fi
+    uci -q set luci.main.lang=zh_cn
+    uci -q set luci.main.resourcebase=/luci-static/resources
+    log 'luci core 段已归一为 named main（防主题取 nil）'
+  fi
+  # 官方 90_luci-theme-argon 首启会设；这里再兜底一次，确保主题就是 Argon
+  [ "$(uci -q get luci.main.mediaurlbase 2>/dev/null)" = '/luci-static/argon' ] \
+    || uci -q set luci.main.mediaurlbase=/luci-static/argon
+  [ -f /etc/config/argon ] || log '警告：/etc/config/argon 缺失，Argon 设置页可能异常'
+  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
+         /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
+
+  # ── 机器狗插件：出厂停用，钥匙交给用户（第 60 次）──
+  ensure wdsdog wdsdog.main
+  setv wdsdog.main enabled 0
+  setv wdsdog.main dryrun 1
+  setv wdsdog.main delay 5
+  setv wdsdog.main grace 6
+  setv wdsdog.main interval 30
+  setv wdsdog.main iface auto
+  setv wdsdog.main peer auto
+  [ -x /etc/init.d/vs010-watchdog ] && /etc/init.d/vs010-watchdog disable 2>/dev/null || true
+
+  # ── DHCP Snooping（无线侧非法 DHCP 服务器防护）：监测模式，不阻断不重启 ──
+  ensure dhcp-guard dhcp-guard.main
+  setv dhcp-guard.main enabled 1
+  setv dhcp-guard.main mode monitor
+  setv dhcp-guard.main interval 60
+  [ -x /etc/init.d/vs010-dhcp-guard ] && /etc/init.d/vs010-dhcp-guard enable 2>/dev/null || true
+
+  [ -x /etc/init.d/vs010-ntp ] && /etc/init.d/vs010-ntp enable 2>/dev/null || true
+  /etc/init.d/dropbear enable 2>/dev/null || true
+  /etc/init.d/uhttpd   enable 2>/dev/null || true
+  # ★ 网桥模式：自动配对 + WDS 主/客户端纯二层配置（守护首轮 apply 一次）
+  if [ "$MODE" = wds ]; then
+    : > /etc/vs010/wds.pending
+    [ -x /etc/init.d/vs010-wds-pair ] && /etc/init.d/vs010-wds-pair enable 2>/dev/null || true
+  else
+    [ -x /etc/init.d/vs010-wds-pair ] && /etc/init.d/vs010-wds-pair disable 2>/dev/null || true
+  fi
+  uci -q commit
+  mkdir -p /etc/vs010; printf '%s\n' "$BID" > "$STAMP"
+  # 兼容旧版丰富状态页：把角色透出到它读的路径（只读垫片，不改无线配置）
+  if [ "$MODE" = wds ]; then
+    printf '%s\n' "$(cat /etc/vs010/role 2>/dev/null || echo ap)" > /etc/bridge_role
+    printf '%s\n' "$(cat /etc/vs010/role 2>/dev/null || echo ap)" > /etc/qsdk_role
+    printf 'auto\n' > /etc/bridge_role_mode
+  else
+    printf 'ap\n' > /etc/bridge_role
+    printf 'ap\n' > /etc/qsdk_role
+    printf 'auto\n' > /etc/bridge_role_mode
+  fi
+  [ -x /usr/sbin/vs010-host ] && /usr/sbin/vs010-host >/dev/null 2>&1 || true
+  [ -x /etc/init.d/vs010-luci-fix ] && /etc/init.d/vs010-luci-fix start >/dev/null 2>&1 || true
+  log "就绪 mode=$MODE ip=$(uci -q get network.lan.ipaddr)/$(uci -q get network.lan.netmask) stp=$(uci -q get network.lan.stp) build=$BID"
+}
+
+start(){ scrub; apply; }
+boot(){ scrub; apply; }
