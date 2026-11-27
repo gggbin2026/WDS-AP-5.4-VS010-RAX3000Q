@@ -1,9 +1,0 @@
-#!/bin/sh
-PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
-# 极简无线取证：刷完跑一次，把输出贴回来即可判断无线栈
-K=$(uname -r 2>/dev/null || echo '?')
-echo "kernel : $K"
-echo "stack  : $(lsmod 2>/dev/null | grep -qiE 'qca_ol|wifi_3_0|ipq_cnss2' && echo 'qca-wifi 闭源 (5.4.213)' || (lsmod 2>/dev/null | grep -q '^ath11k' && echo 'ath11k 开源' || echo '未加载'))"
-echo "radios : $(iw dev 2>/dev/null | grep -c '^phy' || echo 0)  $(ls /sys/class/ieee80211 2>/dev/null | tr '\n' ' ')"
-echo "bdf    : $(ls /lib/firmware/IPQ5018/bdwlan.b10 /lib/firmware/IPQ5018/qcn6122/bdwlan.b60 2>/dev/null | wc -l)/2"
-echo "dmesg  : $(dmesg 2>/dev/null | grep -ciE 'invalid board magic|QMI.*fail|Kernel panic|failed to fetch board') 条异常"
