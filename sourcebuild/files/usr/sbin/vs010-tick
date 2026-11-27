@@ -1,0 +1,69 @@
+#!/bin/sh
+# 第 20 次：单一常驻调度器 —— 替代原来 4 个各自 procd respawn 的常驻 loop
+#   （vs010-wds-pair / vs010-dhcp-guard / vs010-ntp / vs010-watchdog）。
+#   常驻 shell 进程 4 → 1，procd 监控实例 4 → 1；出厂停用的机器狗不再空转。
+#   NTP 300s / Snooping 60s / WDS 60s / 机器狗 30s，全部由本进程分频调度。
+#   🔴 不碰无线驱动 / BDF / ART；只调用已验证的 CLI，绝不重建 radio / wifi down / reboot。
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+D=/etc/vs010
+MODE=$(cat "$D/mode" 2>/dev/null || echo wds)
+[ "$MODE" = ap ] || MODE=wds
+CFG="$D/ntp.interval"
+
+log(){ logger -t vs010-tick "$*" 2>/dev/null || true; }
+
+# NTP 纯内网客户端：三台服务器逐个试，单轮全失败也继续下一轮（绝不退出循环）
+ntp_round=0
+sync_ntp(){
+  ntp_round=$((ntp_round+1))
+  printf '%s\n' "$ntp_round" > "$D/ntp.round" 2>/dev/null || true
+  for s in $(uci -q get system.ntp.server 2>/dev/null | tr ' ' '\n'); do
+    [ -n "$s" ] || continue
+    ntpd -n -q -p "$s" >/dev/null 2>&1 && { log "NTP OK $s"; return 0; }
+    busybox ntpd -n -q -p "$s" >/dev/null 2>&1 && { log "NTP OK $s"; return 0; }
+  done
+  log 'NTP 本轮三台均不可达，下一轮继续'
+  return 1
+}
+
+# 无线 DHCP Snooping：只读监测，内联避免每轮再 fork 一个 shell
+snoop_once(){
+  n=$(logread 2>/dev/null | grep -ci 'DHCP.*OFFER.*from' 2>/dev/null)
+  [ -n "$n" ] || n=0
+  printf 'last_scan=%s illegal_offers=%s\n' "$(date +%H:%M:%S)" "$n" \
+    > "$D/snooping.state" 2>/dev/null || true
+  [ "$n" != 0 ] && log "可疑 DHCP OFFER $n 条（monitor，未阻断）"
+  if [ "$(uci -q get dhcp-guard.main.mode 2>/dev/null)" = block ] \
+     && command -v ebtables >/dev/null 2>&1; then
+    ebtables -A FORWARD -p IPv4 --ip-proto udp --ip-sport 67 -j DROP 2>/dev/null \
+      || log 'ebtables 规则未生效（不影响启动）'
+  fi
+  return 0
+}
+
+# WDS 角色收敛：只在网桥模式、且用户没手动指定角色时跑（与旧 loop 同语义）
+wds_once(){
+  [ "$MODE" = wds ] || return 0
+  [ -x /usr/sbin/vs010-wds-pair ] || return 0
+  [ -f "$D/wds.manual" ] && return 0
+  /usr/sbin/vs010-wds-pair once >/dev/null 2>&1 || true
+}
+
+# 机器狗：默认 enabled=0，出厂完全不进检查分支；用户 on 后由 tick 接管
+wdog_once(){
+  [ "$(uci -q get wdsdog.main.enabled 2>/dev/null)" = 1 ] || return 0
+  [ -x /usr/sbin/bridge-watchdog ] || return 0
+  /usr/sbin/bridge-watchdog check >/dev/null 2>&1 || true
+}
+
+# 首轮：开机立刻同步一次时间 + 扫一次，之后进入 30 秒基础 tick
+sync_ntp || true
+snoop_once
+T=0
+while :; do
+  sleep 30 || sleep 30
+  T=$((T+1))
+  wdog_once                                        # 30s（仅启用时）
+  [ $((T % 2))  = 0 ] && { wds_once; snoop_once; }   # 60s
+  [ $((T % 10)) = 0 ] && { sync_ntp || true; }       # 300s = 5 分钟
+done

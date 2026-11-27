@@ -1,0 +1,5 @@
+# 第 20 次：网桥(WDS)固件【不注入】的另一模式界面
+# 路径相对 files/，只删构建临时树，仓库源保持不变（两模式仍共用同一套源）。
+www/ap/index.html
+www/cgi-bin/apstatus
+usr/lib/lua/luci/view/vs010_ap.htm

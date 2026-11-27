@@ -1,0 +1,42 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+# 模式切换 / 地址设置：改完立即生效，不用重编、不碰无线驱动
+M=/etc/vs010/mode; IPF=/etc/vs010/ipaddr; NMF=/etc/vs010/netmask
+cur(){ cat "$M" 2>/dev/null || echo wds; }
+usage(){ cat <<'EOS'
+用法: vs010-mode status | set wds|ap | set-ip <IP> [NETMASK] | stp on|off | apply
+  wds = 网桥(WDS 主/备)   ap = 普通无线接入点
+  出厂: wds / 172.10.10.241 / 255.255.252.0 / STP on
+EOS
+}
+case "${1:-status}" in
+  status)
+    echo "mode   : $(cur)"
+    echo "ip     : $(cat "$IPF" 2>/dev/null || echo 172.10.10.241) / $(cat "$NMF" 2>/dev/null || echo 255.255.252.0)"
+    echo "stp    : $(uci -q get network.lan.stp 2>/dev/null || echo 未生成)"
+    echo "kernel : $(uname -r)"
+    echo "build  : $(cat /etc/firmware_build 2>/dev/null)"
+    ;;
+  set)
+    case "${2:-}" in wds|ap) printf '%s\n' "$2" > "$M";; *) usage; exit 1;; esac
+    rm -f /etc/vs010/applied
+    sh /etc/init.d/vs010-mode apply
+    echo "已切到 $2（无线配置未重建，/bridge/ 与 /ap/ 两个页面都在）"
+    ;;
+  set-ip)
+    [ -n "${2:-}" ] || { usage; exit 1; }
+    printf '%s\n' "$2" > "$IPF"
+    [ -n "${3:-}" ] && printf '%s\n' "$3" > "$NMF"
+    uci -q set network.lan.ipaddr="$2"
+    [ -n "${3:-}" ] && uci -q set network.lan.netmask="$3"
+    uci -q commit network
+    echo "管理地址已改为 $2；若启用机器狗请同步 bridge-watchdog set-peer"
+    ;;
+  stp)
+    [ "${2:-}" = on ] && V=1 || V=0
+    uci -q set network.lan.stp=$V; uci -q commit network
+    echo "STP = $V"
+    ;;
+  apply) rm -f /etc/vs010/applied; sh /etc/init.d/vs010-mode apply ;;
+  *) usage; exit 1 ;;
+esac

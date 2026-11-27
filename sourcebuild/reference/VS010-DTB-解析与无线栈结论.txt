@@ -1,0 +1,109 @@
+VS010 真实设备树取证（仓库 3000Q-VS010-固件/DTS/vs010.dtb，45056 B，FDT v17）
+纯 Python 按 DTB 结构块 token 逐节点还原：311 节点 / 1999 行。
+
+顶层：
+  model      = "CUCC VS010"
+  compatible = "cucc,vs010", "qcom,ipq5018-ap-mp02.1", "qcom,ipq5018-mp02.1", "qcom,ipq5018"
+  memory     = 0x40000000 起 0x10000000（256 MiB）
+
+无线节点（原厂闭源栈）：
+  wifi@c000000   compatible = "qcom,cnss-qca5018" / "qcom,ipq5018-wifi"
+                 qcom,board_id = 0x10 (16)   → bdwlan.b10
+                 qcom,bdf-addr = 0x4c400000   status = "ok"
+  wifi1@c000000  compatible = "qcom,cnss-qcn6122" / "qcom,cnss-qcn9100"
+                 qcom,board_id = 0x60 (96)   → bdwlan.b60
+                 qcom,bdf-addr = 0x4d300000   status = "ok"
+  remoteproc@cd00000  "qcom,ipq5018-q6-mpd"  firmware = "IPQ5018/q6_fw.mdt"
+  remoteproc_pd1      "qcom,ipq5018-wcss-ahb-mpd"   m3_firmware = "IPQ5018/m3_fw.mdt"
+  remoteproc_pd2      "qcom,ipq5018-wcss-pcie-mpd"  m3_firmware = "qcn6122/m3_fw.mdt"
+
+按键 / LED / 交换芯片（实机值）：
+  wps 键 GPIO34 低有效；mesh LED GPIO33；pwr LED GPIO31
+  QCA8337 reset GPIO26；仅一个按键，无独立 reset 键
+  ess-switch1: switch_cpu_bmp=0x40, switch_lan_bmp=0x1e, switch_wan_bmp=0
+  （VS010 是 LAN3 直连 CPU 作 WAN；3000Q 的位图是 0x48/0x34/0x02，不同）
+
+分区（MIBIB 固定 24 个 mtd，非 qcom,smem-part）：
+  0:ART @ 0x780000 大小 0x100000（1 MiB）—— 每台唯一的校准 + MAC
+  0:TRAINING @ 0x880000，rootfs @ 0x900000
+
+════════════════════════════════════════════════════════════════
+【两条无线栈的区别 —— r21 曾在这里判断失误】
+════════════════════════════════════════════════════════════════
+                原厂 VS010                 kkstone / ByteArray0 编译线
+  驱动          闭源 cnss2 + qca_ol/umac/wifi_3_0/ipq_cnss2   开源 kmod-ath11k
+  BDF 格式      bdwlan.b10 / bdwlan.b60                       board-2.bin 容器（ipq-wifi-*）
+  Q6/m3 固件    原厂 IPQ5018/q6_fw.mdt 等                     ath11k-firmware-ipq5018 / qcn6122 包
+  board_id      0x10 / 0x60                                  &wifi0=0x24(36) / &wifi1=0x60(96)
+
+kkstone target/linux/ipq50xx/Makefile:
+  LINUX_VERSION-5.4 := -qsdk-11.5.0.5
+  DEFAULT_PACKAGES += kmod-ath11k wpad-basic-wolfssl kmod-qca-nss-dp ...
+package/firmware/ath11k-firmware/Makefile:
+  PKG_SOURCE_URL := https://github.com/quic/upstream-wifi-fw
+  $(eval $(call generate-ath11k-firmware,ipq5018))
+  $(eval $(call generate-ath11k-firmware,qcn6122,qcn6122,qcn6122/))
+ipq5000-rax3000q.dts:
+  &q6v5_wcss firmware = "IPQ5018/q6_fw.mdt"
+  &wifi0 qcom,board_id = <0x24>;  &wifi1 qcom,board_id = <0x60>
+
+════════════════════════════════════════════════════════════════
+【r22 更正：010 无线是可以修的，缺的不是 Q6 固件，是板级 BDF】
+════════════════════════════════════════════════════════════════
+r21 结论「采用该仓库的内核和无线驱动修不好 010 无线」，对【原厂闭源 cnss2 栈】
+成立 —— DTS 绑定、Q6 加载链、BDF 容器格式三处确实不兼容，bdwlan.bXX 也变不成
+board-2.bin。但本编译线用的是【开源 ath11k】：q6_fw.mdt / m3_fw.mdt 由
+ath11k-firmware-* 包从 quic/upstream-wifi-fw 提供，根本不需要原厂那套固件链。
+r21 把两条栈混为一谈了，这里更正。
+
+真正缺的只有板级校准数据（BDF / board-2.bin）：
+  package/firmware/ipq-wifi/Makefile 把 board-<board>.<chip> 装到
+    /lib/firmware/ath11k/IPQ5018/hw1.0/board-2.bin   (2.4G)
+    /lib/firmware/ath11k/qcn6122/hw1.0/board-2.bin   (5G)
+  board-cmcc_rax3000q.* 容器头写 qmi-board-id=36 / 96，与 DTS 一一对应。
+  把 3000Q 固件刷进 010，装的是 3000Q 的射频校准，且没有 cucc_vs010 的
+  Device / board.d / 分区声明 → 无线不注册、有线照常（与用户实机现象一致）。
+
+r22 从 whmzsu/vs010-openwrt 的 oem_extract/ 拉到 VS010 真实裸 BDF：
+  bdwlan.bin          131072 B (2.4G)
+  qcn6102_bdwlan.bin  131072 B (5G)
+用本仓库两份 VS010 ART 交叉校验（0:ART 偏移 0x1000 / 0x26800 各 0x20000）：
+  VS010-smem_0-ART.bin              2.4G 99.20% / 5G 97.70%
+  d83dcc685b5a-VS010-smem_0-ART.bin 2.4G 99.27% / 5G 97.69%
+  RAX3000Q-mtd13-0ART              2.4G 99.46% / 5G 97.65%
+（差异是每台唯一校准微调，板级模板一致 → 证实是 VS010 的 BDF）
+
+容器格式（131156 B = 84 B 头 + 131072 B body）：
+  "QCA-ATH11K-BOARD\0" + 对齐 + u64 长度 + u32 名字长度(37)
+  + "bus=ahb,qmi-chip-id=0,qmi-board-id=NN" + 对齐
+生成 board-cucc_vs010.ipq5018 (id=36) / .qcn6122 (id=96)：
+  头逐字节沿用 kkstone 3000Q 样本，body 换成 VS010 BDF。
+  另备 id=16 版本（对应 VS010 原厂 dtb 的 qcom,board_id=0x10）。
+
+【r23 补：分区表实机口径】
+  实机日志 cat /proc/mtd：mtd15 rootfs = 0x06e00000 (110 MiB)，
+  mtd16..18 是 UBI 卷。vs010.dtb 的分区表 rootfs @0x00900000 size 0x06e00000
+  与之逐字节一致 → 这台机器【已刷三方 U-Boot + 大分区 MIBIB】。
+  核查报告第四章的「原厂 24 分区表」(rootfs_1/rootfs 各 0x2840000) 是原厂布局，
+  不适用于这台。分区由 U-Boot 经 qcom,smem-part 填充，DTS 不写死 24 分区偏移。
+  /proc/cmdline 还证明 bootargs-append 需含 "ubi.mtd=rootfs swiotlb=1"，r22 漏了，
+  r23 已补。内核为 32 位 ARMv7（armv7l / vermagic ARMv7 p2v8），
+  与 .config 的 CONFIG_TARGET_ipq50xx_arm=y 一致。
+
+【r23 补：GPIO 实机值】
+  wps 键 GPIO34 低有效（linux,code=529 KEY_WPS_BUTTON，debounce 60，pull-up）；
+  没有独立 reset 键。LED：mesh GPIO33、pwr GPIO31，均低有效、pull-down。
+  QCA8337 reset GPIO26、MDIO gpio36/37 —— 这几个 3000Q 与 VS010 相同。
+  switch：cpu 0x40 / lan 0x1e / wan 0x00，8 对 ar8327-initvals，4 个 PHY 口；
+  3000Q 是 0x48/0x34/0x02、4 对、6 个口。r23 默认保留 3000Q 档（有线已验证），
+  实机值做成可选档 tools/apply-vs010-switch-oem.py。
+  详见 reference/VS010-实机参数对照表.md。
+
+【r22 策略】
+  · 3000Q：真源码编译，原生 ath11k + NSS，插件自由增删，网口速率正常上报
+  · 010：源码线默认可编，无线已补 VS010 板级 BDF；融合线保留作保底回退
+  · ART 每台独立分区，刷机不覆盖；任何固件都不写 ART、不硬编码 MAC
+  · 仍需实机确认：iw dev 是否出现双频接口、qmi-board-id 是否报 16、
+    按键 GPIO / 网口排序（r22 沿用已验证能启动的 3000Q 骨架，避免回归）
+
+完整取证见 reference/无线修复取证.md。
