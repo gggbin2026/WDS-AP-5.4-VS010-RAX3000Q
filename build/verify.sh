@@ -128,10 +128,13 @@ echo "── 旧版丰富页面 / AP SSID / 设备名 / HE160 / WAN 删除 ─�
   && [ "$(stat -c %s files/www/cgi-bin/bridge 2>/dev/null || echo 0)" -gt 20000 ] \
   && [ "$(stat -c %s files/www/cgi-bin/apstatus 2>/dev/null || echo 0)" -gt 10000 ] \
   && ok '旧版 4 个丰富页面/CGI 已替换（33.9K/32.3K/37.4K/19.6K）' || bad '丰富页面未替换'
+# 第 10 次：不要求 git 里存可执行位（网页上传/Windows 会抹成 644），
+# 改由 build.sh 在注入前统一 chmod 755 —— 下面另有硬断言核这层兜底。
 grep -q 'cgi-bin/bridge' files/www/bridge/index.html \
   && grep -q 'cgi-bin/apstatus' files/www/ap/index.html \
-  && [ -x files/www/cgi-bin/bridge ] && [ -x files/www/cgi-bin/apstatus ] \
-  && ok '页面 ↔ CGI 接口对齐（旧 CGI 自带 PATH 兜底）' || bad '页面接口断链'
+  && [ -s files/www/cgi-bin/bridge ] && [ -s files/www/cgi-bin/apstatus ] \
+  && grep -q 'chmod 755' build/build.sh \
+  && ok '页面 ↔ CGI 接口对齐（可执行位由 build.sh 强制）' || bad '页面接口断链'
 [ -f files/etc/bridge.conf ] && grep -q 'ADMIN_IP=172.10.10.241' files/etc/bridge.conf \
   && ok '旧 CGI 依赖的 /etc/bridge.conf 已补（官方无此文件，零冲突）' || bad '缺 bridge.conf'
 grep -q 'VS010-AP' files/etc/init.d/vs010-mode && grep -q 'RAX3000Q-AP' files/etc/init.d/vs010-mode \
@@ -177,8 +180,9 @@ grep -q 'redirect_https=0' files/etc/init.d/vs010-luci-fix \
 grep -q 'lua_prefix' files/etc/init.d/vs010-luci-fix \
   && grep -q 'cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua' files/etc/init.d/vs010-luci-fix \
   && ok 'LuCI lua_prefix 兜底（/cgi-bin/luci 可访问）' || bad 'LuCI 入口无兜底'
-[ -x files/usr/sbin/luci-check ] && grep -q 'RESULT: PASS' files/usr/sbin/luci-check \
-  && ok 'luci-check 一行自证工具在位' || bad '缺自检工具'
+[ -s files/usr/sbin/luci-check ] && grep -q 'RESULT: PASS' files/usr/sbin/luci-check \
+  && grep -q 'chmod 755' build/build.sh \
+  && ok 'luci-check 在位（可执行位由 build.sh 强制）' || bad '缺自检工具'
 grep -q 'usr/lib/lua/luci/dispatcher.lua' build/prune.keep \
   && grep -q 'etc/config/uhttpd' build/prune.keep \
   && grep -q 'view/themes/argon/header.htm' build/prune.keep \
@@ -205,13 +209,17 @@ for k in '172.10.10.241' '255.255.252.0' 'root' 'admin' 'TTYD' '插件' '命令�
   grep -q "$k" README.md || bad "README 缺: $k"
 done
 [ "$F" = 0 ] && ok 'README 覆盖 IP/账号/插件/命令/目录/主题/无线' || true
-# Release body：从 YAML 里精确取出来核（不看整文件误命中）
+# Release body：纯文本精确取出（不依赖 runner 预装 PyYAML）
 BODY=$(python3 - <<'PYX'
-import yaml
-d=yaml.safe_load(open('.github/workflows/build-openwrt.yml',encoding='utf-8'))
-print([x for x in d['jobs']['build']['steps'] if x.get('name')=='Release'][0]['with']['body'])
+import re,sys
+s=open('.github/workflows/build-openwrt.yml',encoding='utf-8').read()
+m=re.search(r'^\s*body:\s*\|\s*\n(.*?)(?=^\s*files:\s*\|)',s,re.M|re.S)
+if not m: sys.exit('未找到 Release body')
+lines=m.group(1).splitlines()
+ind=min((len(x)-len(x.lstrip(' ')) for x in lines if x.strip()),default=0)
+print('\n'.join(x[ind:] if len(x)>=ind else x for x in lines).strip())
 PYX
-)
+) || { echo '  FAIL  Release body 解析失败'; F=1; }
 BN=$(printf '%s\n' "$BODY" | wc -l)
 [ "$BN" -le 25 ] && ok "下载页简洁（$BN 行，不做复杂长文）" || bad '下载页过长'
 for k in '172.10.10.241' '255.255.252.0' 'root' 'admin' 'TTYD' '插件' 'bridge-watchdog' 'portstat' '保留配置' '5.4.213'; do
@@ -250,7 +258,8 @@ grep -q 'phy_link_probe' files/usr/sbin/portstat \
   && grep -q 'swconfig' files/usr/sbin/portstat \
   && grep -q -- '--rows' files/usr/sbin/portstat \
   && ok 'portstat 补 PHY 实测兜底（不写死 1000 / 有 --rows）' || bad '速率兜底缺失'
-[ -x files/usr/sbin/portstat ] || bad 'portstat 不可执行'
+[ -s files/usr/sbin/portstat ] && grep -q 'chmod 755' build/build.sh \
+  && ok 'portstat 在位（可执行位由 build.sh 强制）' || bad 'portstat 缺或构建期无 chmod 兜底'
 grep -q 'portstat --rows' files/usr/lib/lua/luci/controller/admin/vs010_ports.lua \
   && grep -q '<%+header%>' files/usr/lib/lua/luci/view/vs010_ports.htm \
   && grep -q 'entry({"admin", "status", "vs010_ports"' files/usr/lib/lua/luci/controller/admin/vs010_ports.lua \
@@ -263,9 +272,13 @@ grep -q 'lib/firmware' tools/build-from-capture.sh \
   && grep -q 'FROM CAPTURE' tools/build-from-capture.sh \
   && grep -q 'sh verify.sh' tools/build-from-capture.sh \
   && ok '回灌带无线栈硬护栏 + 幂等 + 自检' || bad '回灌无护栏'
-grep -q 'vs010_ports' README.md && grep -q 'ART' README.md \
-  && ok '仓库主页详版已补 ART 自读与主题速率页' || bad 'README 缺第 8 次'
-grep -q '第 8 次' CHANGELOG.md && ok 'CHANGELOG 已记第 8 次' || bad 'CHANGELOG 缺第 8 次'
+# 文档类只提示、不 FAIL：网页上传时文档晚传一步不该卡住编译
+if grep -q 'vs010_ports' README.md && grep -q 'ART' README.md \
+   && grep -q '第 8 次' CHANGELOG.md; then
+  ok 'README / CHANGELOG 已记第 8 次'
+else
+  echo '  NOTE  第 8 次文档未同步（不影响编译）'
+fi
 
 echo "── 第 9 次：实机导出 → 上传仓库 → Actions 自动出固件 ──"
 grep -q 'cp tools/rootfs-capture.sh' build/build.sh \
@@ -286,8 +299,68 @@ if [ -f capture/prune-real.txt ]; then
 else
   ok '无实机清单（可选），默认 prune.list 正常'
 fi
-grep -q '第 9 次' CHANGELOG.md && grep -q '第 9 次' README.md \
-  && ok 'CHANGELOG / 仓库主页已记第 9 次流程' || bad '文档缺第 9 次'
+if grep -q '第 9 次' CHANGELOG.md && grep -q '第 9 次' README.md; then
+  ok 'CHANGELOG / 仓库主页已记第 9 次流程'
+else
+  echo '  NOTE  第 9 次文档未同步（不影响编译）'
+fi
+
+echo "── 第 10 次：上传丢权限位不再卡 CI / 不依赖 runner 预装 PyYAML ──"
+grep -q 'chmod 755' build/build.sh \
+  && grep -q '\-perm -u=x' build/build.sh \
+  && grep -q 'NEXEC' build/build.sh \
+  && ok 'build.sh 注入前统一 chmod 755（含 rc.d/CGI/init.d/usr/sbin）' || bad '缺权限兜底'
+# 只核「真正的导入行」，避免断言自身的字符串被自己匹配到
+NYAML=$( { grep '^import ' build/verify.sh; grep '^from ' build/verify.sh; } | grep -c yaml )
+[ "$NYAML" = 0 ] \
+  && ok 'verify.sh 零 PyYAML 依赖（纯文本解析 workflow）' || bad "仍依赖 yaml（$NYAML 处）"
+# 负例：把注入树全设成 644，真跑构建，确认产物里脚本仍是 755
+python3 - <<'PYM' || F=1
+import shutil,tempfile,os,subprocess,stat,pathlib,glob
+src='/data/workspace/_newrepo'
+t=tempfile.mkdtemp(); d=os.path.join(t,'repo'); shutil.copytree(src,d,
+    ignore=shutil.ignore_patterns('.git','*.bin','*.sha256','3000Q-VS010-固件'))
+# 底座固件单独拷回（构建需要）
+os.makedirs(d+'/3000Q-VS010-固件',exist_ok=True)
+for f in glob.glob(src+'/3000Q-VS010-固件/*factory.bin'):
+    dst=d+'/3000Q-VS010-固件/'+os.path.basename(f)
+    try: os.link(f,dst)          # 同盘硬链接，省 55MB 拷贝
+    except OSError: shutil.copy2(f,dst)
+# 🔴 模拟 GitHub 网页上传：所有仓库文件抹成 664
+#    （底座 bin 是硬链接，跳过以免误改源；构建只读它，mode 无关）
+for root,dirs,files in os.walk(d):
+    dirs[:]=[x for x in dirs if x not in ('.git','3000Q-VS010-固件')]
+    for f in files: os.chmod(os.path.join(root,f),0o664)
+r=subprocess.run(['sh','build/build.sh','--device=cucc_vs010','--mode=wds'],
+                 cwd=d,capture_output=True,text=True)
+if r.returncode:
+    print('  FAIL 664 树下构建失败:',r.stdout[-400:],r.stderr[-400:]); raise SystemExit(1)
+out=sorted(glob.glob(d+'/Nwrt-QSDK12.2-5.4-*.bin'))[-1]
+# 从 UBI rootfs 卷里读回注入文件的 mode
+b=pathlib.Path(out).read_bytes(); PEB=131072; v={}
+for i in range(len(b)//PEB):
+    p=b[i*PEB:(i+1)*PEB]
+    if p[:4]==b'UBI#' and p[2048:2052]==b'UBI!' and __import__('struct').unpack_from('>I',p,2048+8)[0]==1:
+        v[__import__('struct').unpack_from('>I',p,2048+12)[0]]=p[4096:]
+sq=os.path.join(t,'n.sqfs'); pathlib.Path(sq).write_bytes(b''.join(v[k] for k in sorted(v)))
+ext=os.path.join(t,'ext'); subprocess.run(['unsquashfs','-f','-d',ext,sq],capture_output=True)
+keys=['usr/sbin/portstat','usr/sbin/luci-check','usr/sbin/vs010-capture',
+      'www/cgi-bin/bridge','www/cgi-bin/apstatus','etc/init.d/vs010-mode']
+bad=[]
+for k in keys:
+    p=os.path.join(ext,k)
+    m=stat.S_IMODE(os.stat(p).st_mode) if os.path.exists(p) else 0
+    print('   ',k,oct(m))
+    if not (m & 0o111): bad.append(k)
+shutil.rmtree(t)
+if bad: print('  FAIL 固件里仍不可执行:',bad); raise SystemExit(1)
+print('  ✅ 664 上传树 → 构建成功 → 固件内 6 个关键脚本全部 755')
+PYM
+if grep -q '第 10 次' CHANGELOG.md && grep -q '第 10 次' README.md; then
+  ok 'CHANGELOG / 仓库主页已记第 10 次'
+else
+  echo '  NOTE  第 10 次文档未同步（不影响编译）'
+fi
 
 echo "── 语法 ──"
 e=0
@@ -312,18 +385,29 @@ H2=$(grep -c '<%+footer%>' files/usr/lib/lua/luci/view/vs010_ports.htm)
 python3 -c 'import ast;ast.parse(open("build/fused.py",encoding="utf-8").read())' 2>/dev/null \
   && ok 'fused.py 语法' || bad 'fused.py 语法'
 python3 - <<'PYEOF' || F=1
-import glob,yaml,subprocess
-b=0
+import glob,re,subprocess,sys
+b=0; total=0
 for p in sorted(glob.glob('.github/workflows/*.yml')):
-    d=yaml.safe_load(open(p,encoding='utf-8'))
-    for j in d['jobs'].values():
-        for s in j.get('steps',[]):
-            r=s.get('run','') or ''
-            if r.strip() and subprocess.run(['bash','-n'],input=r,text=True,capture_output=True).returncode: b+=1
-    print('  OK ',p)
-if b: print('  FAIL run 块',b); raise SystemExit(1)
+    lines=open(p,encoding='utf-8').read().splitlines(); runs=[]; i=0
+    while i < len(lines):
+        m=re.match(r'^(\s+)run:\s*\|\s*$',lines[i])
+        if not m: i+=1; continue
+        base=len(m.group(1)); j=i+1; blk=[]
+        while j < len(lines):
+            x=lines[j]
+            if x.strip() and len(x)-len(x.lstrip(' ')) <= base: break
+            blk.append(x); j+=1
+        nb=[x for x in blk if x.strip()]
+        ind=min((len(x)-len(x.lstrip(' ')) for x in nb),default=0)
+        runs.append('\n'.join(x[ind:] if len(x)>=ind else x for x in blk)); i=j
+    for r in runs:
+        total+=1
+        if r.strip() and subprocess.run(['bash','-n'],input=r,text=True,capture_output=True).returncode: b+=1
+    print('  OK ',p,'run 块',len(runs))
+if total==0: print('  FAIL 未提取到任何 run 块'); sys.exit(1)
+if b: print('  FAIL run 块',b); sys.exit(1)
 PYEOF
 
 echo
-[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 9 次：设备导出脚本入固件 / 清单上传→Actions 自动回灌出固件 / 无线栈零改动 / 零语法错' || echo 'RESULT: FAIL'
+[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 10 次：权限位丢失不再卡 CI / 固件脚本强制 755 / 零 PyYAML 依赖 / 无线栈零改动' || echo 'RESULT: FAIL'
 exit $F

@@ -218,6 +218,7 @@ CHANGELOG.md           一行一次的更新记录
 | 7 | **仓库主页详版说明 + 下载页补齐 IP / 设置 / 插件清单**（纯文档，编译链零改动） |
 | 8 | **ART 每机自读 / 网口速率 PHY 实测兜底 / Argon 主题速率页 / 实机清单回灌**（无线栈零改动） |
 | 9 | **导出脚本随固件刷入 + 清单上传仓库后 Actions 自动出优化版固件**（完整操作见第 14 节） |
+| 10 | **修 CI `Init` 失败**：上传丢可执行位（全 664）→ `build.sh` 注入前强制 755、自检不依赖 mode、去掉 PyYAML 依赖 |
 
 ---
 
@@ -369,3 +370,23 @@ wifi-check; portstat; luci-check; ip -4 addr show br-lan; uptime
 | 删二进制会让内核变快吗 | 不会。服务本来就没启动，内存/CPU 早就省了；只省几 MB flash |
 | 清单传上去后想撤销 | 删掉 `capture/prune-real.txt` 再 `git push`；`prune.list` 里的 `FROM CAPTURE` 块也可整段删 |
 | 清单里出现禁止路径 | 构建会**早停**并打印具体行，删掉那几行重新提交即可 |
+
+---
+
+## 15. 第 10 次：CI `Init` 报 `exit code 1` 的真相
+
+**现象**：`Build 5.4 firmware` 的 `Init` 步 13 秒失败，annotation 写 `Process completed with exit code 1`；页面里 `This step has been truncated` / `There was an error while loading` / `Sign in to view logs` 是 GitHub 页面渲染与未登录提示，`Node.js 20 is deprecated` 只是 warning —— 都不是原因。
+
+**根因**：仓库里所有文件被记成 `100644`（`664`）。GitHub 网页上传、Windows 解压 zip、或 `core.filemode=false` 都会抹掉 unix 可执行位。`Init` 里 `sh verify.sh` 的三处 `-x` 断言（CGI / `luci-check` / `portstat`）FAIL → 退出 1。
+
+🔴 更严重的是：`fused.py` 用 `shutil.copy2()` 注入文件，**沿用源 mode**。就算放它过 CI，刷出来的固件里 `/www/cgi-bin/*`、`/etc/init.d/*`、`/usr/sbin/*` 也是 664 → 丰富页面打不开、首启脚本不跑。
+
+**修法**：`build.sh` 在打进固件前统一 `chmod 755`（脚本类）/ `644`（其余），**从此不再依赖 git 里存的 mode**；`verify.sh` 三处断言改为「文件在位 + 构建期有 chmod 兜底」；两处 `import yaml` 改纯文本解析，去掉对 runner 预装 PyYAML 的依赖。
+
+**验证**：把整棵仓库树故意抹成 `664` 再真跑构建 → 成功出包 → 解包回读固件内 6 个关键脚本，**全部 755**。所以传 r10 之后**不需要**手工 `chmod` / `git update-index --chmod=+x`，直接重跑 Actions 即可。
+
+想自查线上 mode：
+
+```bash
+git ls-files -s | awk '$1=="100644" && $4 ~ /^(files|tools)\// {print}' | head
+```

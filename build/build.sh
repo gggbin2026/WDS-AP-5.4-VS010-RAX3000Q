@@ -39,7 +39,20 @@ printf 'Nwrt-QSDK12.2-5.4-%s-%s-%s\n' "$(date +%Y%m%d)" "$TAG" "$MODE" > "$T/etc
 # ★ 设备侧导出工具必须随固件刷进去，否则用户刷完找不到脚本
 mkdir -p "$T/usr/sbin"
 cp tools/rootfs-capture.sh "$T/usr/sbin/vs010-capture"
-chmod 755 "$T/usr/sbin/vs010-capture"
+
+# ★★ 第 10 次：统一修正注入树权限，不再依赖 git 里存的 mode。
+# GitHub 网页上传 / Windows 解压会把所有文件记成 100644(664)，
+# 而 fused.py 用 shutil.copy2 沿用源 mode → 固件里 CGI / init.d / usr/sbin
+# 全不可执行（页面打不开、首启脚本不跑、verify.sh -x 断言 FAIL）。
+# 这里在打进固件前强制 755，无论仓库 mode 如何都一致。
+find "$T" -type f \( \
+     -path '*/usr/sbin/*' -o -path '*/usr/bin/*' -o -path '*/etc/init.d/*' \
+     -o -path '*/www/cgi-bin/*' -o -path '*/tools/*' -o -name '*.sh' \
+  \) -exec chmod 755 {} + 2>/dev/null || true
+# 普通配置 / 页面 / lua / htm 固定 644，避免 664 带来的噪声
+find "$T" -type f ! -perm -u=x -exec chmod 644 {} + 2>/dev/null || true
+NEXEC=$(find "$T" -type f -perm -u=x | wc -l)
+echo "[build] 注入树可执行脚本 $NEXEC 个（已强制 755）"
 
 # 🔴 安全网：注入树绝不许碰官方配置 / 驱动 / BDF / 分区
 for k in etc/config lib/firmware lib/modules etc/rc.local etc/uci-defaults \
