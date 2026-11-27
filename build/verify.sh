@@ -1160,6 +1160,47 @@ if grep -Fq '第 17 次' CHANGELOG.md && grep -Fq '第 17 次' README.md; then
   ok 'CHANGELOG / README 已记第 17 次'
 else echo '  NOTE  第 17 次文档未同步'; fi
 
+
+echo "── 第 18 次：合并冲突善后包（仓库终态防护，固件零改动）──"
+A=tools/apply-r18.sh
+[ -s "$A" ] && ok '一键落位脚本 tools/apply-r18.sh 在位' || bad '缺 apply-r18.sh'
+for k in 'git merge --abort' '全仓零冲突标记' 'chmod 755' 'files/ 汇总 sha256' '不要在 GitHub Desktop 里点'; do
+  grep -Fq "$k" "$A" || bad "apply-r18.sh 缺 $k"
+done
+# 🔴 冲突标记零容忍：GitHub Desktop 的「继续合并」会把 <<<<<<< 标记提交进仓库，
+#    结果 Actions 里 YAML 解析失败 / verify.sh 语法崩。这里在自检阶段直接挡住。
+if grep -R -lE '^(<<<<<<< |>>>>>>> )|^=======$' \
+     --include='*.yml' --include='*.yaml' --include='*.sh' --include='*.lua' \
+     --include='*.htm' --include='*.html' --include='*.md' --include='*.txt' \
+     --include='*.conf' --include='*.list' --include='*.keep' \
+     .github build capture files reference tools README.md CHANGELOG.md 2>/dev/null | grep -q .; then
+  bad '仓库残留合并冲突标记（<<<<<<< / ======= / >>>>>>>）'
+else
+  ok '全仓零合并冲突标记（workflow / verify.sh / 页面 / 文档全查）'
+fi
+# 主构建入口必须在（上一轮截图里它在 origin/master 被删 → modify/delete 冲突）
+[ -s .github/workflows/build-openwrt.yml ] \
+  && grep -Fq 'device:' .github/workflows/build-openwrt.yml \
+  && ok '主构建 workflow 在位（不接受远端删除）' || bad '主 workflow 缺，Actions 无法跑'
+[ -s .github/workflows/build-source.yml ] \
+  && ok 'RAX3000Q 原生编译线 build-source.yml 保留' || bad '缺 build-source.yml'
+# 注入树未变 → 4 个固件与 r17 逐字节一致（防「顺手改了 files/ 却没重编」）
+FH=$(python3 - <<'PYEOF18'
+import os,hashlib
+h=hashlib.sha256(); r='files'
+for x,ds,fs in os.walk(r):
+ ds.sort()
+ for f in sorted(fs):
+  p=os.path.join(x,f); h.update(os.path.relpath(p,r).encode()); h.update(open(p,'rb').read())
+print(h.hexdigest())
+PYEOF18
+)
+[ "$FH" = '132fe689e385d49d70906862f3f2d7c108c059d5b5ef7b1b300f850e5bb760a5' ] \
+  && ok 'files/ 与 r17 逐字节一致 → 重编后固件内容等价（无需重刷）' \
+  || echo '  NOTE  files/ 已变化，记得重跑 Build 5.4 firmware'
+grep -Fq '第 18 次' CHANGELOG.md && grep -Fq '第 18 次' README.md \
+  && ok 'CHANGELOG / README 已记第 18 次' || bad '第 18 次文档未同步'
+
 echo "── 语法 ──"
 e=0
 for f in $(find . -type f \( -name '*.sh' -o -path 'files/*' -o -path 'files.vs010/*' -o -path 'files.rax3000q/*' \) ! -name '*.md' ! -name '*.html' ! -name '*.lua' ! -name '*.htm' ! -name 'firmware_model'); do
@@ -1207,5 +1248,5 @@ if b: print('  FAIL run 块',b); sys.exit(1)
 PYEOF
 
 echo
-[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 17 次：可用新版 Argon v2.4.3 / WDS 主客 241·242 / DHCP 两模式全关 / 双机型 / 前 16 次全继承' || echo 'RESULT: FAIL'
+[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 18 次：合并冲突善后 / 一键落位 / 前 17 次全继承 / 固件内容等价 r17' || echo 'RESULT: FAIL'
 exit $F

@@ -681,3 +681,65 @@ ls /usr/lib/lua/luci/view/themes/argon2/                    # 6 个 .htm
 ### 两种设备
 
 主题、角色开关、DHCP 全关都在**公共 `files/` 层**，`cucc_vs010` 与 `cmcc_rax3000qy` 的 4 个组合（wds/ap）同时生效，无需机型差异文件。
+
+
+---
+
+## 22. 第 18 次：合并冲突善后（怎么传这个包）
+
+> 这一版**不是固件更新**。`files/` 汇总 sha256 与 r17 完全一致；实测重编后解包 **2259 个 rootfs 文件逐项一致、kernel FIT 卷一致**，仅 `mksquashfs` 的容器时间戳让 `.bin` 字节不同（功能等价、已刷机器不用重刷）。它只是把仓库从「合并冲突」状态拉回干净终态。
+
+### 你截到的那个弹窗是什么
+
+| 文件 | 提示 | 该怎么处理 |
+|---|---|---|
+| `.github/workflows/build-openwrt.yml` | 文件在 `origin/master` 不存在 | 远端删了/没有主构建入口 → **必须保留本地版**，选「接受远端删除」会让 `device=all / mode=all` 那套 4 组合矩阵消失 |
+| `build/verify.sh` | 1 个冲突 | 本地 r18 版含第 17/18 次断言 → **整份以本地为准**，不要手工拼 `<<<<<<< / ======= / >>>>>>>` |
+
+🔴 **别点「继续合并」**：冲突没解决就提交，会把带标记的文件推上去，Actions 里 YAML 解析失败、`verify.sh` 语法崩。
+
+### 路径 A（推荐，零手工解冲突）
+
+1. GitHub Desktop 点 **「停止合并」**
+2. 解压 **`VS010-full-5.4-r18.zip`**，整体覆盖仓库目录（`.github/` 是隐藏目录，别漏）
+3. 仓库根执行：
+
+```bash
+sh tools/apply-r18.sh
+# 自动：abort 残留合并 → 查冲突标记 → 修权限 → 核 files/ 哈希 → 跑 verify.sh
+# 最后一行应是 RESULT: PASS —— 第 18 次
+git add -A && git commit -m "VS010 5.4 r18" && git push origin master
+```
+
+### 路径 B（增量包，仓库没乱时用）
+
+```bash
+cp -a VS010-patch-5.4-r18.zip解压目录/. .
+sh tools/apply-r18.sh
+git add -A && git commit -m "VS010 5.4 r18" && git push origin master
+```
+
+### 路径 C（本地已经一团乱、想彻底清空重建）
+
+```bash
+cd ~/WDS-AP-5.4-VS010-RAX3000Q
+find . -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +   # 保留 .git，保留历史
+unzip -q ~/Downloads/VS010-full-5.4-r18.zip -d .
+sh tools/apply-r18.sh
+git add -A && git commit -m "r18 清空重建" && git push origin master
+```
+
+### 解完 3 个必查
+
+```bash
+grep -R -nE '^(<<<<<<<|=======|>>>>>>>)' .github build files README.md CHANGELOG.md   # 应无输出
+sh verify.sh                                                                          # PASS —— 第 18 次
+git status --short                                                                    # 别把 .bin/.sha256 提交进去
+```
+
+push 后 `Actions → Build 5.4 firmware → Run workflow`（device=all / mode=all）出 4 个带 `5.4` 的 Release。
+
+### 两个不用管
+
+- **权限**：网页上传/Windows 解压抹成 664 不影响 —— `build.sh` 打进固件前统一强制 755，`apply-r18.sh` 也会先把仓库侧修一遍。
+- **Release 权限**：workflow 里已显式 `permissions: contents: write`，本轮**没动这个文件**，不会重新引入冲突。
