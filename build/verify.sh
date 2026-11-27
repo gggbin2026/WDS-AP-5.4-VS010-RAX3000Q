@@ -74,8 +74,11 @@ grep -q 'net.ipv6.conf.all.disable_ipv6=1' files/etc/sysctl.d/99-vs010-no-ipv6.c
 grep -q "setv network.lan ifname 'eth0 eth1'" files/etc/init.d/vs010-mode \
   && grep -q 'uci -q delete network.wan' files/etc/init.d/vs010-mode \
   && ok 'WAN+LAN 全部桥接进 br-lan（无 wan/wan6）' || bad 'WAN 未入桥'
-grep -q 'passwd root' files/etc/init.d/vs010-mode && grep -q 'RootPasswordAuth=on' files/etc/init.d/vs010-mode \
-  && ok 'SSH 修复：空密码→root/admin + dropbear 不绑 Interface' || bad 'SSH 未修'
+grep -q 'ADMIN_HASH=' files/etc/init.d/vs010-mode \
+  && grep -q 'fix_login' files/etc/init.d/vs010-mode \
+  && ! grep -q '/bin/passwd root' files/etc/init.d/vs010-mode \
+  && grep -q 'RootPasswordAuth=on' files/etc/init.d/vs010-mode \
+  && ok 'SSH 修复：空密码→root/admin（固定 hash 写 overlay）+ dropbear 不绑 Interface' || bad 'SSH 未修'
 grep -q 'ttyMSM0::askfirst' files/etc/init.d/vs010-mode && grep -q 'kill -HUP 1' files/etc/init.d/vs010-mode \
   && ok '串口 getty 保住/兜底（ttyMSM0 115200n8）' || bad '串口未管'
 grep -q '绝不重建 radio' files/usr/sbin/vs010-wds-pair \
@@ -118,7 +121,9 @@ grep -q 'set-role master' files/usr/sbin/vs010-wds-pair \
 ! grep -q '\*11a\*' files/usr/sbin/vs010-wds-pair \
   && grep -q 'channel 优先' files/usr/sbin/vs010-wds-pair \
   && ok 'WDS 只建 5G radio（11axg 不误判）' || bad 'WDS 可能落到 2.4G'
-grep -q 'passwd root' files/etc/init.d/vs010-mode && ok 'root 密码 admin' || bad '未设 root 密码'
+grep -Fq "ADMIN_HASH='\$1\$VS010Z" files/etc/init.d/vs010-mode \
+  && grep -q 'fix_login' files/etc/init.d/vs010-mode \
+  && ok 'root 密码 admin（固定 hash，每次开机幂等）' || bad '未设 root 密码'
 grep -q '172.10.10.241' files/etc/vs010/ipaddr && grep -q '255.255.252.0' files/etc/vs010/netmask \
   && ok 'IP 172.10.10.241 /22' || bad 'IP 错'
 
@@ -305,6 +310,16 @@ else
   echo '  NOTE  第 9 次文档未同步（不影响编译）'
 fi
 
+echo "── 第 11 次：自检零硬编码路径（runner 可跑）──"
+grep -q 'src=os.getcwd()' build/verify.sh \
+  && grep -q 'shutil.which' build/verify.sh \
+  && ok '负例用仓库根 cwd + 工具守卫（不依赖开发机路径）' || bad '负例仍硬编码路径'
+if grep -q '第 11 次' CHANGELOG.md && grep -q '第 11 次' README.md; then
+  ok 'CHANGELOG / 仓库主页已记第 11 次'
+else
+  echo '  NOTE  第 11 次文档未同步（不影响编译）'
+fi
+
 echo "── 第 10 次：上传丢权限位不再卡 CI / 不依赖 runner 预装 PyYAML ──"
 grep -q 'chmod 755' build/build.sh \
   && grep -q '\-perm -u=x' build/build.sh \
@@ -317,7 +332,12 @@ NYAML=$( { grep '^import ' build/verify.sh; grep '^from ' build/verify.sh; } | g
 # 负例：把注入树全设成 644，真跑构建，确认产物里脚本仍是 755
 python3 - <<'PYM' || F=1
 import shutil,tempfile,os,subprocess,stat,pathlib,glob
-src='/data/workspace/_newrepo'
+# 🔴 第 11 次：绝不硬编码任何开发机路径。本脚本开头已 cd "$(dirname "$0")/.."，
+#    cwd 就是仓库根；GitHub runner 上是 /home/runner/work/<repo>/<repo>。
+src=os.getcwd()
+if not (shutil.which('unsquashfs') and shutil.which('mksquashfs')):
+    print('  NOTE 本环境无 squashfs-tools，跳过 664 负例（CI Init 已安装）')
+    raise SystemExit(0)
 t=tempfile.mkdtemp(); d=os.path.join(t,'repo'); shutil.copytree(src,d,
     ignore=shutil.ignore_patterns('.git','*.bin','*.sha256','3000Q-VS010-固件'))
 # 底座固件单独拷回（构建需要）
@@ -361,6 +381,212 @@ if grep -q '第 10 次' CHANGELOG.md && grep -q '第 10 次' README.md; then
 else
   echo '  NOTE  第 10 次文档未同步（不影响编译）'
 fi
+
+echo "── 第 12 次：实机保留基线（双机型共用 / 无线零改动）──"
+AL=capture/installed-allowlist.txt
+if [ -s "$AL" ]; then
+  NL=$(grep -cv '^[[:space:]]*$' "$AL")
+  [ "$NL" -ge 200 ] && ok "基线 $NL 行（opkg list-installed 实机导出）" || bad '基线行数异常'
+  for k in 'kernel - 5.4.213' 'qca-wifi-fw-hw4' 'qca-cnss-daemon' 'kmod-qca-nss-drv' \
+           'ttyd' 'luci-theme-argonv3' 'dropbear' 'uhttpd' 'ethtool' 'swconfig'; do
+    grep -qF "$k" "$AL" || bad "基线缺 $k"
+  done
+  [ "$F" = 0 ] && ok '基线含 5.4.213 闭源栈 / Argon / TTYD / SSH / 速率工具' || true
+  # 用户确实清掉的杂项菜单不应出现在「最干净系统」里
+  for k in wireguard ddns upnp zerotier autoreboot odhcpd firewall; do
+    grep -qi "^${k}" "$AL" && bad "基线仍含杂项 $k（与实机状态不符）" || true
+  done
+  [ "$F" = 0 ] && ok 'DDNS/UPnP/ZeroTier/WireGuard/定时重启 等不在基线' || true
+else
+  bad '缺 capture/installed-allowlist.txt'
+fi
+[ -s tools/apply-installed-baseline.sh ] && sh -n tools/apply-installed-baseline.sh \
+  && ok '回灌脚本在位 / sh -n 通过' || bad '回灌脚本缺或语法错'
+grep -q 'FROM INSTALLED BASELINE' tools/apply-installed-baseline.sh \
+  && grep -q 'prune.keep 零交集' tools/apply-installed-baseline.sh \
+  && grep -q '拒绝回灌（无线/主题/管理可能被误删）' tools/apply-installed-baseline.sh \
+  && ok '回灌带基线硬护栏 + 白名单零交集 + 幂等' || bad '回灌无护栏'
+grep -q 'FROM INSTALLED BASELINE' build/prune.list \
+  && ok 'prune.list 已落双机型共用基线块' || bad '基线块未回灌'
+grep -q 'VS010_PRUNE_LIST=build/prune.list' build/build.sh \
+  && ok '两个机型构建共用同一份 prune.list（标准一致）' || bad '两机型精简标准不一致'
+grep -q 'Apply installed baseline (both devices)' .github/workflows/build-openwrt.yml \
+  && grep -q '^permissions:' .github/workflows/build-openwrt.yml \
+  && grep -q 'contents: write' .github/workflows/build-openwrt.yml \
+  && ok 'Actions 自动回灌基线 + 显式 Release 权限（不再依赖 Settings）' || bad 'workflow 未接基线/缺权限'
+grep -q -- '--installed=' tools/build-from-capture.sh \
+  && ok '回灌入口兼容 --installed= 与 --capture= 两种实机来源' || bad '入口不兼容'
+# 负例：故意把基线里的闭源无线栈删掉，护栏必须拒绝回灌（且不递归调 verify）
+python3 - <<'PYB' || F=1
+import tempfile, pathlib, shutil, subprocess, os
+src = os.getcwd()
+t = tempfile.mkdtemp()
+for d in ('tools','build','capture'):
+    os.makedirs(os.path.join(t,d), exist_ok=True)
+for f in ('tools/apply-installed-baseline.sh','build/prune.list','build/prune.keep'):
+    shutil.copy2(os.path.join(src,f), os.path.join(t,f))
+p = pathlib.Path(t,'capture','installed-allowlist.txt')
+txt = pathlib.Path(src,'capture','installed-allowlist.txt').read_text()
+# 制造「无线栈被误删」的坏清单
+bad = '\n'.join(l for l in txt.splitlines()
+                if not l.startswith(('qca-','kmod-qca','kernel -','libiwinfo')))
+# 仍补足 200 行，确保触发的是①而不是行数检查
+pad = [f'fake-pkg-{i} - 1' for i in range(230)]
+p.write_text(bad + '\n' + '\n'.join(pad) + '\n')
+r = subprocess.run(['sh','tools/apply-installed-baseline.sh','--dryrun'],
+                   cwd=t, capture_output=True, text=True)
+shutil.rmtree(t)
+if r.returncode == 0:
+    print('  FAIL 坏基线未被拒绝'); raise SystemExit(1)
+if '拒绝回灌' not in (r.stdout+r.stderr):
+    print('  FAIL 未报出护栏原因'); raise SystemExit(1)
+print('  ✅ 负例：无线栈缺失的基线被护栏拒绝（rc=%d）' % r.returncode)
+PYB
+if grep -q '第 12 次' CHANGELOG.md; then ok 'CHANGELOG 已记第 12 次'; else echo '  NOTE  第 12 次文档未同步（不影响编译）'; fi
+
+echo "── 第 13 次：实机两 BUG 修复（root/admin + 5G 单 SSID）──"
+M=files/etc/init.d/vs010-mode; W=files/usr/sbin/vs010-wds-pair
+# ① 密码：固定 hash、每次开机都在 stamp 之前修、不再用会静默失败的 passwd
+grep -Fq "ADMIN_HASH='\$1\$VS010Z\$UZ4qew78etSeRS5gXbjrR1'" "$M" \
+  && ok 'admin 固定 MD5-crypt hash 写入（openssl -salt VS010Z）' || bad '密码 hash 不对'
+! grep -q '/bin/passwd root' "$M" && ok '已弃用 passwd（只读底层/非 tty 会失败）' || bad '仍用 passwd'
+grep -q '^  fix_login        # ★ 放在 stamp 检查之前' "$M" \
+  && grep -q '^  fix_login$' "$M" \
+  && ok '密码在 apply 的 stamp 检查【之前】+ scrub 里各修一次（不受幂等 stamp 影响）' || bad '密码仍受 stamp 限制'
+grep -q 'VS010_SHADOW:-/etc/shadow' "$M" && grep -q 'cat "\$T" > "\$SH"' "$M" \
+  && ok 'shadow 写 overlay copy-up（失败走同目录 mv 兜底）' || bad 'shadow 写入不可靠'
+# ② 5G 收敛：只开 radio、复用首个 VAP、其余 disable、不再新增段
+grep -Fq '=wifi-device$' "$M" && ! grep -Fq 'wifi-\(device\|iface\)' "$M" \
+  && ok '只清 wifi-device 的 disabled（不再把多余 5G VAP 全打开）' || bad '仍会复活双 SSID'
+grep -Fq 'vs010-wds-pair converge' "$M" && ok 'scrub 开机即收敛（不等 loop 的 35 秒）' || bad '开机仍有双 SSID 窗口'
+grep -Fq 'case " $seen "' "$M" && grep -Fq 'wireless.$sec.disabled=1' "$M" \
+  && ok 'AP 模式每 radio 只留一个 enabled iface' || bad 'AP 模式仍会双 SSID'
+grep -q '^converge(){' "$W" && grep -q 'disabled=1' "$W" \
+  && grep -q 'wds.section' "$W" \
+  && grep -q '5G 单 VAP 收敛' "$W" \
+  && ok 'WDS 复用首个 5G VAP、其余 disabled=1（不新增 wds_z）' || bad '5G 收敛缺'
+grep -q '^  converge) converge' "$W" && grep -q 'converge || return 1' "$W" \
+  && ok 'converge 可独立调用，apply 复用同一套收敛' || bad '收敛入口不通'
+! grep -Fq 'wireless.$WDS_SEC=wifi-iface' "$W" || bad '仍会新增 wds_z 段'
+
+# ③ mock 真跑 A：官方 root:: → 必须变成 admin hash，daemon 行不动，二次幂等
+python3 - <<'PY13A' || F=1
+import subprocess, tempfile, pathlib, os
+src = pathlib.Path('files/etc/init.d/vs010-mode').read_text()
+h = [l for l in src.splitlines() if l.startswith('ADMIN_HASH=')][0].split("'",1)[1].split("'",1)[0]
+i = src.index('fix_login(){'); j = src.index('\n}', i) + 2
+fn = src[i:j]
+t = tempfile.mkdtemp(); sh = pathlib.Path(t,'shadow')
+orig = 'root::0:0:99999:7:::\ndaemon:*:0:0:99999:7:::\nntp:x:0:0:99999:7:::\n'
+sh.write_text(orig)
+script = 'log(){ :; }\nADMIN_HASH=' + "'"+h+"'" + '\n' + fn + '\nfix_login\n'
+env = dict(os.environ, VS010_SHADOW=str(sh))
+r = subprocess.run(['sh','-c',script], env=env, capture_output=True, text=True)
+if r.returncode: print('  FAIL fix_login 执行错', r.stderr[-300:]); raise SystemExit(1)
+a = sh.read_text()
+r2 = subprocess.run(['sh','-c',script], env=env, capture_output=True, text=True)
+b = sh.read_text()
+root = [x for x in a.splitlines() if x.startswith('root:')][0].split(':')[1]
+print('   root hash:', root)
+# 反算：openssl passwd -1 -salt VS010Z admin 必须就是这个 hash
+try:
+    calc = subprocess.check_output(['openssl','passwd','-1','-salt','VS010Z','admin'],text=True).strip()
+except Exception:
+    calc = h          # 无 openssl 的环境跳过反算，不误报
+ok = (root == h == calc
+      and [x for x in a.splitlines() if x.startswith(('daemon:','ntp:'))]
+        == [x for x in orig.splitlines() if x.startswith(('daemon:','ntp:'))]
+      and a == b)
+import shutil; shutil.rmtree(t)
+if not ok: print('  FAIL 密码归一/幂等/其它行保持 不成立'); raise SystemExit(1)
+print('  ✅ mock A：root::→admin，其它账号不变，二次运行幂等')
+PY13A
+
+# ④ mock 真跑 B：官方 5G 生成 2 个 VAP → converge 后只剩 1 个 SSID
+python3 - <<'PY13B' || F=1
+import json, os, pathlib, subprocess, tempfile, shutil, stat
+t = tempfile.mkdtemp(); bind = pathlib.Path(t,'bin'); bind.mkdir()
+state = pathlib.Path(t,'uci.json')
+db = {
+ 'wireless.wifi0':{'_type':'wifi-device'},
+ 'wireless.wifi0.hwmode':'11axg','wireless.wifi0.channel':'1',
+ 'wireless.wifi0.disabled':'0',
+ 'wireless.wifi1':{'_type':'wifi-device'},
+ 'wireless.wifi1.hwmode':'11axa','wireless.wifi1.channel':'36',
+ 'wireless.wifi1.disabled':'0',
+ 'wireless.radio0':{'_type':'wifi-iface'},
+ 'wireless.radio0.device':'wifi0','wireless.radio0.ssid':'Nwrt_2.4G',
+ 'wireless.radio0.disabled':'0','wireless.radio0.mode':'ap',
+ 'wireless.radio1':{'_type':'wifi-iface'},
+ 'wireless.radio1.device':'wifi1','wireless.radio1.ssid':'Nwrt_5G',
+ 'wireless.radio1.disabled':'0','wireless.radio1.mode':'ap',
+ 'wireless.radio1_1':{'_type':'wifi-iface'},
+ 'wireless.radio1_1.device':'wifi1','wireless.radio1_1.ssid':'Nwrt_5G_Guest',
+ 'wireless.radio1_1.disabled':'0','wireless.radio1_1.mode':'ap',
+}
+state.write_text(json.dumps(db))
+# 最小假 uci：只实现 show/get/set/delete/commit，覆盖脚本用到的全部语法
+fake = r'''#!/usr/bin/env python3
+import sys,os,json
+S=os.environ['UCI_STATE']; db=json.load(open(S))
+a=[x for x in sys.argv[1:] if x!='-q']; c=a[0] if a else 'show'
+TYPES=('wifi-iface','wifi-device','interface','dropbear','dhcp','core','timeserver','wdsdog','dhcp-guard','ntp-sync')
+def dump(): json.dump(db,open(S,'w'))
+if c=='show':
+    sec=a[1] if len(a)>1 else ''
+    for k,v in db.items():
+        if sec and not (k==sec or k.startswith(sec+'.')): continue
+        if isinstance(v,dict): print(k+'='+v.get('_type',''))
+        else: print(k+"='"+str(v)+"'")
+elif c=='get':
+    v=db.get(a[1]);  sys.exit(1 if v is None else (print(v.get('_type','') if isinstance(v,dict) else v) or 0))
+elif c=='set':
+    k,_,v=a[1].partition('=')
+    db[k]={'_type':v} if v in TYPES else v; dump()
+elif c=='delete':
+    db.pop(a[1],None); dump()
+elif c=='commit':
+    dump()
+'''
+p = bind/'uci'; p.write_text(fake); p.chmod(0o755)
+# mock 副本：只把 /etc/vs010 与 /etc/config/wireless 指到临时目录
+s = pathlib.Path('files/usr/sbin/vs010-wds-pair').read_text()
+s = s.replace('D=/etc/vs010', 'D='+t+'/vs010')
+s = s.replace('/etc/config/wireless', t+'/wireless')
+# 脚本自带 PATH=/usr/sbin:... 会盖掉注入的假 uci，mock 副本里前置假 bin
+s = s.replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH',
+              'PATH='+str(bind)+':/usr/sbin:/usr/bin:/sbin:/bin; export PATH')
+os.makedirs(t+'/vs010', exist_ok=True); pathlib.Path(t,'wireless').write_text('# mock\n')
+pathlib.Path(t+'/vs010/role').write_text('ap\n')
+mock = pathlib.Path(t,'pair.sh'); mock.write_text(s)
+env = dict(os.environ, PATH=str(bind)+':'+os.environ['PATH'], UCI_STATE=str(state))
+def run():
+    return subprocess.run(['sh',str(mock),'converge'], env=env, capture_output=True, text=True)
+r = run()
+if r.returncode: print('  FAIL converge rc',r.returncode,r.stdout[-400:],r.stderr[-400:]); raise SystemExit(1)
+d1 = json.loads(state.read_text())
+r2 = run(); d2 = json.loads(state.read_text())
+g = lambda d,k: d.get(k)
+iface5 = [k.split('.')[1] for k,v in d1.items()
+          if isinstance(v,dict) and v.get('_type')=='wifi-iface' and d1.get(k+'.device')=='wifi1']
+enabled5 = [x for x in iface5 if g(d1,'wireless.'+x+'.disabled')!='1']
+print('   5G VAP 段:',iface5,' enabled:',enabled5)
+ok = (len(enabled5)==1
+      and g(d1,'wireless.'+enabled5[0]+'.ssid')=='WDS-Bridge-Z'
+      and g(d1,'wireless.'+enabled5[0]+'.key')=='WDS123456'
+      and g(d1,'wireless.'+enabled5[0]+'.network')=='lan'
+      and g(d1,'wireless.'+enabled5[0]+'.wds')=='1'
+      and g(d1,'wireless.'+enabled5[0]+'.wds_bridge')=='br-lan'
+      and g(d1,'wireless.wds_z') is None
+      and g(d1,'wireless.radio0.wds') is None
+      and g(d1,'wireless.radio0.disabled')=='0'
+      and g(d1,'wireless.wifi1.htmode')=='HT160'
+      and g(d1,'wireless.wifi1.channel')=='36'
+      and d1==d2)
+shutil.rmtree(t)
+if not ok: print('  FAIL 5G 单 SSID 收敛/幂等 不成立'); raise SystemExit(1)
+print('  ✅ mock B：2 个 5G VAP → 仅 1 个 WDS-Bridge-Z；2.4G 不动；HE160；二次幂等')
+PY13B
 
 echo "── 语法 ──"
 e=0
@@ -409,5 +635,5 @@ if b: print('  FAIL run 块',b); sys.exit(1)
 PYEOF
 
 echo
-[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 10 次：权限位丢失不再卡 CI / 固件脚本强制 755 / 零 PyYAML 依赖 / 无线栈零改动' || echo 'RESULT: FAIL'
+[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 13 次：root/admin 每次开机幂等 / 5G 仅 1 个 SSID / 双机型共用基线 / 无线栈零改动 / Release 权限已钉死' || echo 'RESULT: FAIL'
 exit $F

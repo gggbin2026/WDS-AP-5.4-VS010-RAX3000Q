@@ -219,6 +219,7 @@ CHANGELOG.md           一行一次的更新记录
 | 8 | **ART 每机自读 / 网口速率 PHY 实测兜底 / Argon 主题速率页 / 实机清单回灌**（无线栈零改动） |
 | 9 | **导出脚本随固件刷入 + 清单上传仓库后 Actions 自动出优化版固件**（完整操作见第 14 节） |
 | 10 | **修 CI `Init` 失败**：上传丢可执行位（全 664）→ `build.sh` 注入前强制 755、自检不依赖 mode、去掉 PyYAML 依赖 |
+| 11 | **复查补漏**：第 10 次负例写死开发机绝对路径（本地 PASS 是假象，runner 必挂）→ 改 `os.getcwd()` + 工具守卫；只改 `build/verify.sh` 1 个文件 |
 
 ---
 
@@ -390,3 +391,52 @@ wifi-check; portstat; luci-check; ip -4 addr show br-lan; uptime
 ```bash
 git ls-files -s | awk '$1=="100644" && $4 ~ /^(files|tools)\// {print}' | head
 ```
+
+**第 11 次补漏**：r10 上传后复查发现，第 10 次的负例里写死了开发机路径 `/data/workspace/_newrepo`。本地自检 PASS 是假象 —— GitHub runner 上是 `/home/runner/work/...`，`copytree` 会抛异常让 `Init` 再次退出 1。已改成 `os.getcwd()`（本脚本开头已 `cd` 到仓库根）并加 `shutil.which` 工具守卫。验证方式：临时移走本地目录，在线上全 664 快照里跑 `sh verify.sh`，仍 PASS。**这一版只改 `build/verify.sh` 一个文件**，编译链、底座、无线栈零改动。
+
+---
+
+## 16. 第 12 次：双机型共用「实机保留基线」
+
+设备刷的是**最干净的好固件**（没打过我方注入层），只把没用的插件/服务关掉。此时：
+
+```sh
+opkg list-installed > /tmp/installed.txt
+find /overlay -name '.wh.*' …        # 🔴 输出为空是【正常】，不是命令没反应
+```
+
+空输出说明当时是 `stop + disable` 而不是 `opkg remove`，overlay 里没有 whiteout 删除标记 —— **不用再导任何东西**。`installed.txt`（还剩哪些包）本身就是最可靠的依据，存成 `capture/installed-allowlist.txt` 即可。
+
+`tools/apply-installed-baseline.sh` 把它作为 **VS010 / RAX3000Q 两个机型共用**的保留标准：
+
+- 基线**里**的包（5.4.213 闭源栈、Argon、TTYD、SSH、ethtool/swconfig…）→ 一律保留；
+- 基线**外**的杂项（DDNS / UPnP / ZeroTier / WireGuard / 定时重启 / odhcpd / firewall / dnsmasq…）→ 只删 UCI 配置、`rc.d` 自启链接、LuCI 控制器；**二进制与内核模块不删**（不启动就不占内存 CPU，也不冒破坏闭源依赖的风险）；
+- 护栏：基线缺 5.4.213 闭源栈 / Argon / TTYD / SSH 任一项，或回灌块与 `prune.keep` 有交集，直接拒绝出包；写入幂等，重复运行不累积。
+
+`Actions → Build 5.4 firmware` 新增 `Apply installed baseline (both devices)` 自动回灌；同时显式写入 `permissions: contents: write`，钉死之前 `Resource not accessible by integration` 那个 Release 权限问题（不再依赖仓库 Settings）。
+
+**无线一字未动**：全量逐文件比对两机型均为「官方 rootfs 被修改 0 / 删除 38 项全是杂项 / 新增 37 项全是我方注入」，kernel FIT 卷 `4063232 B` 逐字节一致，4 个闭源 `.ko` + `bdwlan.b10/b60` MD5 全一致。之前所有插件与配置（IP `172.10.10.241/22`、root/admin、NTP 三台 5 分钟、WDS-Z/K、AP 机型 SSID、HE160、Argon 速率页、SSH/串口/TTYD、机器狗出厂停用）照旧。
+
+---
+
+## 17. 第 13 次：实机反馈的两个 BUG（已修）
+
+刷完发现「**登陆密码不是 admin**」「**5G 出现两个 SSID**」，根因都在运行期脚本，不在无线栈：
+
+| 现象 | 根因 | 修法 |
+|---|---|---|
+| 密码不是 admin | 官方 `/etc/shadow` 是 `root::`（空）。旧 `printf 'admin\nadmin\n' \| passwd root` 在 squashfs 只读底层 + 非 tty 下静默失败，而 `apply()` 不管成败都写 `applied` stamp，之后每次开机见 stamp 就 `return` → 密码永远没设上；LuCI 首登还会因空密码强制用户自己设一个 | 固定 MD5-crypt（`$1$VS010Z$…`，= `openssl passwd -1 -salt VS010Z admin`）直接写 overlay；`fix_login()` 在 **`scrub()` 每次开机** + **`apply()` 的 stamp 检查之前** 各跑一次，幂等；SSH / LuCI / 串口同读 shadow，一处修三处好 |
+| 5G 两个 SSID | 官方 QSDK 首启给 5G 生成多个 `wifi-iface`；旧脚本再**新增** `wireless.wds_z`，且 `vs010-mode` 把 `wifi-device` **和 `wifi-iface` 一起** `disabled=0` → 原厂 SSID 与 `WDS-Bridge-Z` 同时广播 | **不再新增段**：`converge()` 复用 5G 上第一个 `wifi-iface` 作唯一 WDS VAP，同 radio 其余 `disabled=1`（不删段，保住闭源 VAP 索引）；只清 `wifi-device` 的 disabled；AP 模式同样按 radio 分组只留一个；`scrub()` 开机即收敛，不等 loop 的 35 秒 |
+
+**刷完 4 行自证**：
+
+```sh
+grep '^root:' /etc/shadow                 # 第二字段应为 $1$VS010Z$UZ4qew78etSeRS5gXbjrR1
+ssh root@172.10.10.241                    # 密码 admin
+uci show wireless | grep -E '=wifi-iface|ssid|disabled'   # 5G 应只剩 1 个 disabled=0 且 ssid=WDS-Bridge-Z
+vs010-wds-pair status                     # 显示「唯一 WDS 段 / 5G 仅 1 个 SSID」
+```
+
+若极少数机型的 crypt 后端不认 `$1$`，串口敲一次 `passwd root` 手动设 `admin` 即可（脚本下次开机会再归一）。
+
+**这轮没动**：`build/prune.list` / 实机保留基线 / workflow / `fused.py` / 官方底座 / BDF / 驱动 / ART。自检新增两个真跑 mock：空密码→admin hash（openssl 反算一致、其它账号不变、二次幂等）；2 个 5G VAP → 仅 1 个 `WDS-Bridge-Z`（2.4G 不动、HE160、二次幂等）。

@@ -1,11 +1,14 @@
 #!/bin/sh
 # 网桥 WDS 自动配对：主(ap) / 客户端(sta) 角色收敛 + 4addr 纯二层桥接配置
-# 🔴 绝不重建 radio、绝不删改已有 wifi-iface、绝不 wifi down、绝不重启机器。
-#    只新增一个命名段 wireless.wds_z（QSDK 原生识别），一次 /sbin/wifi reload。
+# 🔴 绝不重建 radio、绝不 wifi down、绝不重启机器。
+# ★ 第 13 次：不再【新增】wireless.wds_z。官方 QSDK 首启会在 5G 上生成多个
+#   wifi-iface（原厂 SSID + 可能的 backhaul/guest VAP），旧脚本再挂一个 wds_z
+#   → 5G 同时广播两个 SSID。改为【复用 5G 上第一个 iface】作唯一 WDS VAP，
+#   同 radio 其余 iface 全部 disabled=1（不删段，避免闭源 VAP 索引错乱）。
 PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
 D=/etc/vs010
 ROLE=$D/role; PEER=$D/peer; STATE=$D/wds.state
-WDS_SEC=wds_z
+WDS_SEC=wds_z                      # 仅「5G 上无任何 iface」时的兜底段名
 WDS_SSID=WDS-Bridge-Z
 WDS_KEY=WDS123456
 log(){ logger -t vs010-wds-pair "$*" 2>/dev/null || true; }
@@ -65,50 +68,68 @@ decide(){
     [ -n "$ip" ] && bridge-watchdog set-peer "$ip" >/dev/null 2>&1 || true
   fi
 }
-apply(){
+# ★★ 5G 单 VAP 收敛（第 13 次核心）★★
+#   绝不重建 radio：只改既有 wifi-iface 的 option + disabled。
+converge(){
   [ -f /etc/config/wireless ] || { log 'wireless 未生成，稍后重试'; return 1; }
   d=$(dev5g)
   role=$(cat "$ROLE" 2>/dev/null || echo ap)
   [ "$role" = sta ] || role=ap
   # ★ 5G 桥接走 HE160：QSDK qcawifi.sh 对 `11axa + HT160` 转 11AHE160，
-  #   `11ac + HT160` 转 11ACVHT160；channel 36 是 160MHz 合法主信道。
+  #   channel 36 是 160MHz 合法主信道。
   uci -q set "wireless.$d.hwmode=11axa"
   uci -q set "wireless.$d.htmode=HT160"
   uci -q set "wireless.$d.channel=36"
   uci -q set "wireless.$d.disabled=0"
-  # ★ 2.4G 不桥接：清掉可能残留的 wds 标记，保留普通 AP 本地覆盖
-  for sec in $(uci show wireless 2>/dev/null \
-               | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
-    [ "$sec" = "$WDS_SEC" ] && continue
-    dev=$(uci -q get "wireless.$sec.device" 2>/dev/null)
-    [ "$dev" = "$d" ] && continue          # 5G 上其它 VAP 不动
-    uci -q delete "wireless.$sec.wds"        2>/dev/null || true
-    uci -q delete "wireless.$sec.wds_bridge" 2>/dev/null || true
-    [ "$(uci -q get "wireless.$sec.mode" 2>/dev/null)" = wds ] \
-      && uci -q set "wireless.$sec.mode=ap" || true
-  done
   # 备份一次（只供 off 参考，不整体覆盖）
   [ -f "$D/wireless.orig" ] || cp -f /etc/config/wireless "$D/wireless.orig" 2>/dev/null || true
-  uci -q set "wireless.$WDS_SEC=wifi-iface"
-  uci -q set "wireless.$WDS_SEC.device=$d"
-  uci -q set "wireless.$WDS_SEC.network=lan"          # ★ 纯二层，进 br-lan
-  uci -q set "wireless.$WDS_SEC.ssid=$WDS_SSID"
-  uci -q set "wireless.$WDS_SEC.encryption=psk2+ccmp"
-  uci -q set "wireless.$WDS_SEC.key=$WDS_KEY"
-  uci -q set "wireless.$WDS_SEC.disabled=0"
-  uci -q delete "wireless.$WDS_SEC.wds"        2>/dev/null || true
-  uci -q delete "wireless.$WDS_SEC.wds_bridge" 2>/dev/null || true
+  primary=''
+  for sec in $(uci show wireless 2>/dev/null \
+               | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+    [ -n "$sec" ] || continue
+    dev=$(uci -q get "wireless.$sec.device" 2>/dev/null)
+    if [ "$dev" = "$d" ]; then
+      # 5G：第一个留作唯一 WDS VAP，其余全部关掉（不删段）
+      if [ -z "$primary" ]; then primary=$sec
+      else uci -q set "wireless.$sec.disabled=1"; fi
+    else
+      # ★ 2.4G 不桥接：清掉可能残留的 wds 标记，保留普通 AP 本地覆盖
+      uci -q delete "wireless.$sec.wds"        2>/dev/null || true
+      uci -q delete "wireless.$sec.wds_bridge" 2>/dev/null || true
+      [ "$(uci -q get "wireless.$sec.mode" 2>/dev/null)" = wds ] \
+        && uci -q set "wireless.$sec.mode=ap" || true
+    fi
+  done
+  # 极端兜底：5G 上确实没有任何 iface 才新建（正常实机不会走到）
+  if [ -z "$primary" ]; then
+    primary=$WDS_SEC
+    uci -q set "wireless.$primary=wifi-iface"
+    uci -q set "wireless.$primary.device=$d"
+  fi
+  printf '%s\n' "$primary" > "$D/wds.section"
+  uci -q set "wireless.$primary.device=$d"
+  uci -q set "wireless.$primary.network=lan"          # ★ 纯二层，进 br-lan
+  uci -q set "wireless.$primary.ssid=$WDS_SSID"
+  uci -q set "wireless.$primary.encryption=psk2+ccmp"
+  uci -q set "wireless.$primary.key=$WDS_KEY"
+  uci -q set "wireless.$primary.disabled=0"
+  uci -q delete "wireless.$primary.wds"        2>/dev/null || true
+  uci -q delete "wireless.$primary.wds_bridge" 2>/dev/null || true
   if [ "$role" = ap ]; then
     # ★ WDS 主：AP VAP + 4addr（hostapd wds_bridge 把 4addr 帧送进 br-lan）
-    uci -q set "wireless.$WDS_SEC.mode=ap"
-    uci -q set "wireless.$WDS_SEC.wds=1"
-    uci -q set "wireless.$WDS_SEC.wds_bridge=br-lan"
+    uci -q set "wireless.$primary.mode=ap"
+    uci -q set "wireless.$primary.wds=1"
+    uci -q set "wireless.$primary.wds_bridge=br-lan"
   else
     # ★ WDS 客户端：QSDK 原生 mode=wds → qcawifi.sh 内部设 wds=1 + mode=sta
-    uci -q set "wireless.$WDS_SEC.mode=wds"
+    uci -q set "wireless.$primary.mode=wds"
   fi
   uci -q commit wireless
-  log "WDS 应用 role=$role dev=$d ssid=$WDS_SSID network=lan（4addr 纯二层）"
+  log "5G 单 VAP 收敛：仅 $primary 广播 $WDS_SSID（role=$role / HE160 / network=lan），其余同 radio iface disabled=1"
+}
+apply(){
+  converge || return 1
+  log "WDS 应用 role=$(cat "$ROLE" 2>/dev/null || echo ap) ssid=$WDS_SSID network=lan（4addr 纯二层）"
   # 一次标准 reload；失败只告警，绝不重启、绝不 wifi down
   if [ -x /sbin/wifi ]; then
     /sbin/wifi reload >/dev/null 2>&1 \
@@ -116,13 +137,13 @@ apply(){
   else
     log '缺 /sbin/wifi，配置已写入，重启后生效'
   fi
-  printf '%s\n' "$role" > "$D/wds.applied"
+  printf '%s\n' "$(cat "$ROLE" 2>/dev/null || echo ap)" > "$D/wds.applied"
   rm -f "$D/wds.pending"
   # 设备名跟随角色：主 WDS-Z / 客户端 WDS-K
   [ -x /usr/sbin/vs010-host ] && /usr/sbin/vs010-host >/dev/null 2>&1 || true
   # 兼容旧版丰富状态页（只读垫片）
-  printf '%s\n' "$role" > /etc/bridge_role
-  printf '%s\n' "$role" > /etc/qsdk_role
+  printf '%s\n' "$(cat "$ROLE" 2>/dev/null || echo ap)" > /etc/bridge_role
+  printf '%s\n' "$(cat "$ROLE" 2>/dev/null || echo ap)" > /etc/qsdk_role
   printf '%s\n' 'auto' > /etc/bridge_role_mode
 }
 case "${1:-once}" in
@@ -134,6 +155,7 @@ case "${1:-once}" in
       sleep 60
     done ;;
   once) decide; cat "$STATE" ;;
+  converge) converge && echo "5G 单 VAP 已收敛：$(cat "$D/wds.section") / $WDS_SSID" ;;
   apply) decide; apply; echo 'WDS 配置已应用（/sbin/wifi reload 一次）' ;;
   set-role)
     case "${2:-}" in
@@ -145,26 +167,41 @@ case "${1:-once}" in
     : > "$D/wds.pending"; apply
     echo "已设为 $2（ssid=$WDS_SSID）" ;;
   off)
-    uci -q delete "wireless.$WDS_SEC" 2>/dev/null || true
+    s=$(cat "$D/wds.section" 2>/dev/null || echo "$WDS_SEC")
+    d=$(dev5g)
+    # 主 VAP 还原成普通 AP（去掉 4addr 参数）
+    uci -q delete "wireless.$s.wds"        2>/dev/null || true
+    uci -q delete "wireless.$s.wds_bridge" 2>/dev/null || true
+    uci -q set "wireless.$s.mode=ap"
+    # 同 radio 被收敛关掉的 VAP 恢复
+    for x in $(uci show wireless 2>/dev/null \
+               | sed -n 's/^wireless\.\([^.=]*\)=wifi-iface$/\1/p'); do
+      [ "$x" = "$s" ] && continue
+      [ "$(uci -q get "wireless.$x.device" 2>/dev/null)" = "$d" ] \
+        && uci -q set "wireless.$x.disabled=0" || true
+    done
+    # 兼容旧版：若存在独立 wds_z 且不是当前主 VAP，删掉
+    [ "$s" != "$WDS_SEC" ] && uci -q delete "wireless.$WDS_SEC" 2>/dev/null || true
     uci -q commit wireless
-    rm -f "$D/wds.applied" "$D/wds.manual" "$D/wds.pending"
+    rm -f "$D/wds.applied" "$D/wds.manual" "$D/wds.pending" "$D/wds.section"
     [ -x /sbin/wifi ] && /sbin/wifi reload >/dev/null 2>&1 || true
-    echo 'WDS 段已移除（原有用户 SSID 未动）' ;;
+    echo 'WDS 参数已移除，5G 恢复普通 AP（原有 VAP 已恢复）' ;;
   status)
+    s=$(cat "$D/wds.section" 2>/dev/null || echo "$WDS_SEC")
     echo "role   : $(cat "$ROLE" 2>/dev/null || echo unknown)  (ap=WDS 主 / sta=WDS 客户端)"
     echo "manual : $([ -f "$D/wds.manual" ] && echo 是 || echo 否，自动收敛)"
     echo "peer   : $(cat "$PEER" 2>/dev/null || echo 未发现)"
-    echo "vap    : $(vap)   5G radio: $(dev5g)"
-    echo "wds    : mode=$(uci -q get wireless.$WDS_SEC.mode 2>/dev/null || echo 未应用) \
-ssid=$(uci -q get wireless.$WDS_SEC.ssid 2>/dev/null || echo 未应用) \
-network=$(uci -q get wireless.$WDS_SEC.network 2>/dev/null || echo 未应用)"
+    echo "vap    : $(vap)   5G radio: $(dev5g)   唯一 WDS 段: $s"
+    echo "wds    : mode=$(uci -q get wireless.$s.mode 2>/dev/null || echo 未应用) \
+ssid=$(uci -q get wireless.$s.ssid 2>/dev/null || echo 未应用) \
+network=$(uci -q get wireless.$s.network 2>/dev/null || echo 未应用)"
     echo "5G     : $(uci -q get wireless.$(dev5g).htmode 2>/dev/null || echo '-') \
-ch=$(uci -q get wireless.$(dev5g).channel 2>/dev/null || echo '-')（HE160）  |  2.4G 不桥接"
+ch=$(uci -q get wireless.$(dev5g).channel 2>/dev/null || echo '-')（HE160） | 5G 仅 1 个 SSID | 2.4G 不桥接"
     echo "host   : $(cat /proc/sys/kernel/hostname 2>/dev/null || echo '?')（主 WDS-Z / 客户端 WDS-K）"
     echo "state  : $(cat "$STATE" 2>/dev/null || echo 尚未扫描)"
     echo "注意   : 4addr 是否建立请实机 wlanconfig ath1 list 确认；本脚本不重启机器" ;;
   link)
     v=$(vap); [ -z "$v" ] && { echo '未发现 5G VAP'; exit 1; }
     echo "VAP=$v  WDS=$WDS_SSID"; wlanconfig "$v" list 2>/dev/null | head -12 || true ;;
-  *) echo '用法: vs010-wds-pair loop|once|apply|set-role master|client|auto|off|status|link' ;;
+  *) echo '用法: vs010-wds-pair loop|once|converge|apply|set-role master|client|auto|off|status|link' ;;
 esac
