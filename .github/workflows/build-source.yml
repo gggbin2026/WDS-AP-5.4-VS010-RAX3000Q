@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       device:
-        description: '机型（010 为实验，默认只编 3000Q）'
+        description: '机型（双模式单包；默认一次出 3000Q + VS010 两个固件）'
         required: true
-        default: 'cmcc_rax3000q'
+        default: 'all'
         type: choice
         options: [cmcc_rax3000q, cucc_vs010, all]
       default_mode:
@@ -16,17 +16,17 @@ on:
         type: choice
         options: [wds, ap]
       vs010_experimental:
-        description: '编译 VS010 源码线（已补 VS010 板级 BDF）'
+        description: '编译 VS010 源码线（已补实机 BDF / GPIO / bootargs，默认参与）'
         required: true
         default: 'true'
         type: choice
-        options: [true, false]
+        options: ['true', 'false']
       vs010_switch_oem:
         description: 'VS010 改用实机 switch 档（⚠ 需 TTL，默认不勾）'
         required: false
         default: 'false'
         type: choice
-        options: [false, true]
+        options: ['false', 'true']
 
 permissions:
   contents: write

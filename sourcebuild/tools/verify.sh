@@ -712,6 +712,25 @@ ok 'workflow run 块语法核验完毕'
 echo
 
 
+
+echo "── r29.1：GitHub workflow_dispatch schema（choice options 必须字符串）──"
+python3 - <<'PYR291'
+import yaml,pathlib
+d=yaml.safe_load(pathlib.Path('../.github/workflows/build-source.yml').read_text())
+on=d.get('on',d.get(True)); ins=on['workflow_dispatch']['inputs']
+for k,v in ins.items():
+    if v.get('type')!='choice': continue
+    assert all(isinstance(x,str) for x in v['options']), f'{k}.options 含非字符串（GitHub 会报 Invalid workflow file）'
+    assert isinstance(v.get('default'),str), f'{k}.default 不是字符串'
+    assert v['default'] in v['options'], f'{k}.default 不在 options 里'
+    print(f'  {k}: options={v["options"]} default={v["default"]!r} ✅')
+assert ins['device']['default']=='all', 'device 默认不是 all，会只编一个机型'
+print('  device 默认 all（一次出两个机型）✅')
+PYR291
+[ $? = 0 ] && ok 'workflow_dispatch 选项全字符串、default 合法、device=all' || bad 'GitHub 手动输入 schema 不合法'
+! grep -Eq '^\s+options: \[(true|false), (true|false)\]' ../.github/workflows/build-source.yml \
+  && ok '无裸布尔 options 残留' || bad '仍有裸布尔 options'
+
 echo "── r29：网口状态 / 网口信息 + 状态栏与选项全椭圆 ──"
 for P in files/www/bridge/index.html files/www/ap/index.html; do
   grep -Fq '网口状态 · PORT STATUS' "$P" && grep -Fq 'id="portStatus"' "$P" \
@@ -871,6 +890,6 @@ print('  WEB 资源齐备 / 两页内联 JS 零语法错 / 高级入口在位 �
 PYWEB
 [ $? = 0 ] && ok '两个界面依赖的资源全在包内且脚本零语法错' || bad '网页资源/脚本异常'
 
-[ "$F" = 0 ] && echo "RESULT: PASS —— 第 29 次全能包：网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
+[ "$F" = 0 ] && echo "RESULT: PASS —— 第 29.1 次：workflow schema 合法 / 网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
              || echo "RESULT: FAIL"
 exit $F
