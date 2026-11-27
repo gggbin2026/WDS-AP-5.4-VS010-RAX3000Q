@@ -743,3 +743,24 @@ push 后 `Actions → Build 5.4 firmware → Run workflow`（device=all / mode=a
 
 - **权限**：网页上传/Windows 解压抹成 664 不影响 —— `build.sh` 打进固件前统一强制 755，`apply-r18.sh` 也会先把仓库侧修一遍。
 - **Release 权限**：workflow 里已显式 `permissions: contents: write`，本轮**没动这个文件**，不会重新引入冲突。
+
+
+---
+
+## 23. 第 19 次：修 Actions 的 `Apply installed baseline` 报错
+
+**现象**：`Build 5.4 firmware #5` 里 `Apply installed baseline (both devices)` → `Process completed with exit code 1`。页面其余 `This step has been truncated` / `There was an error while loading` 都是 GitHub 渲染提示，不是失败。
+
+**根因**：`tools/apply-installed-baseline.sh` 的幂等逻辑把「FROM INSTALLED BASELINE 块起始行之后的所有内容」一并截掉，吃掉了第 15 次追加的 `usr/sbin/ip6tables`（用来让 LuCI 总览 IPv6 WAN/DUID 块消失）→ `verify.sh` FAIL → `set -e` 退出 1。**每次构建都会悄悄少一条精简项**，不只是自检红。
+
+**修法**：块用显式 `(begin)/(end)` 包起来，独立 `tools/baseline-block.awk` 只替换块本身；`cat >` 原地写保留权限；自检失败补 `::error::`。新增 mock 回归断言：块在中间、连跑两次、`ip6tables` 不丢、块不重复。
+
+```bash
+cp -a VS010-patch-5.4-r19.zip解压目录/. .
+sh tools/apply-r18.sh          # 顺手再查一次冲突标记/权限
+sh verify.sh                  # RESULT: PASS —— 第 19 次
+git add -A && git commit -m "VS010 5.4 r19" && git push origin master
+# Actions → Build 5.4 firmware → Re-run / Run workflow（device=all / mode=all）
+```
+
+🔴 本轮**没有改 `.github/workflows/` 任何文件**（r18 那个冲突就是它引起的），`files/` 汇总哈希不变 → 固件内容与 r17 等价，**已刷机器不用重刷**。重跑 Actions 只为拿到 4 个带 `5.4` 的 Release。

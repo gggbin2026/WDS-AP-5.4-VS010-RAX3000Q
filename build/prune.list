@@ -41,7 +41,7 @@ usr/lib/lua/luci/controller/mia.lua
 usr/lib/lua/luci/controller/upnp.lua
 usr/lib/lua/luci/controller/wireguard.lua
 usr/lib/lua/luci/controller/zerotier.lua
-# ── FROM INSTALLED BASELINE：capture/installed-allowlist.txt（双机型共用，勿手改）──
+# ── FROM INSTALLED BASELINE (begin)：capture/installed-allowlist.txt（双机型共用，勿手改）──
 etc/config/autoreboot
 etc/config/ddns
 etc/config/ddns-go
@@ -81,6 +81,7 @@ usr/lib/lua/luci/controller/transmission.lua
 usr/lib/lua/luci/controller/upnp.lua
 usr/lib/lua/luci/controller/wireguard.lua
 usr/lib/lua/luci/controller/zerotier.lua
+# ── FROM INSTALLED BASELINE (end) ──
 
 # 第 15 次：删 ip6tables 符号链接 → LuCI overview 的 has_ipv6=false，
 # IPv6 WAN Status / DUID / IPv6-Address 三块从系统总览自动消失（零覆盖官方视图）

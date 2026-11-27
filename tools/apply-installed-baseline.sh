@@ -95,41 +95,45 @@ usr/lib/lua/luci/controller/zerotier.lua|luci-app-zerotier
 MAP
 
 # ③ 生成块：包名在基线里 → 跳过（保留原厂状态）；不在 → 加入精简。
+PATHS=/tmp/.vs010-paths.$$
 BLOCK=/tmp/.vs010-block.$$
-: > "$BLOCK"
+: > "$PATHS"
 KEPT=0; CUT=0
 while IFS='|' read -r path pkg; do
   [ -n "$path" ] || continue
   if awk -v p="$pkg" '$1==p{f=1} END{exit !f}' "$AL"; then
     KEPT=$((KEPT+1)); continue
   fi
-  printf '%s\n' "$path" >> "$BLOCK"; CUT=$((CUT+1))
+  printf '%s\n' "$path" >> "$PATHS"; CUT=$((CUT+1))
 done < /tmp/.vs010-junkmap.$$
 rm -f /tmp/.vs010-junkmap.$$
-sort -u "$BLOCK" -o "$BLOCK"
+sort -u "$PATHS" -o "$PATHS"
 echo "  基线内保留 $KEPT 项；基线外新增精简 $CUT 条（两机型共用同一份）"
 
 # ④ 二次护栏：生成结果绝不能碰无线 / 主题 / SSH / 内核 / 网络配置 / 官方驱动。
-BAD=$(grep -E '^\.\./|^/|lib/firmware|lib/modules|bdwlan|qca_ol|umac|wifi_3_0|ipq_cnss2|ART|caldata|smem_0|etc/inittab|etc/board\.d|etc/config/(luci|uhttpd|argon|network|wireless|dhcp|dropbear|ttyd)|usr/bin/ttyd|usr/sbin/(dropbear|ethtool|iw|wlanconfig)|www/cgi-bin/luci|dispatcher|themes/argon|controller/(terminal|argon-config)|rc.d/S(00|13|16|19dropbear|20|26|50uhttpd|70|98sysntpd|99ttyd)' "$BLOCK" || true)
-[ -z "$BAD" ] || { echo '::error::回灌块含禁止路径：'; printf '%s\n' "$BAD" | head -8; rm -f "$BLOCK"; exit 1; }
+BAD=$(grep -E '^\.\./|^/|lib/firmware|lib/modules|bdwlan|qca_ol|umac|wifi_3_0|ipq_cnss2|ART|caldata|smem_0|etc/inittab|etc/board\.d|etc/config/(luci|uhttpd|argon|network|wireless|dhcp|dropbear|ttyd)|usr/bin/ttyd|usr/sbin/(dropbear|ethtool|iw|wlanconfig)|www/cgi-bin/luci|dispatcher|themes/argon|controller/(terminal|argon-config)|rc.d/S(00|13|16|19dropbear|20|26|50uhttpd|70|98sysntpd|99ttyd)' "$PATHS" || true)
+[ -z "$BAD" ] || { echo '::error::回灌块含禁止路径：'; printf '%s\n' "$BAD" | head -8; rm -f "$PATHS"; exit 1; }
 # 与 prune.keep 求交集：有任何一项命中即停止出包
-CROSS=$(grep -v '^#' build/prune.keep | grep -v '^[[:space:]]*$' | grep -Fxf "$BLOCK" || true)
-[ -z "$CROSS" ] || { echo '::error::回灌块与白名单冲突：'; printf '%s\n' "$CROSS" | head -8; rm -f "$BLOCK"; exit 1; }
+CROSS=$(grep -v '^#' build/prune.keep | grep -v '^[[:space:]]*$' | grep -Fxf "$PATHS" || true)
+[ -z "$CROSS" ] || { echo '::error::回灌块与白名单冲突：'; printf '%s\n' "$CROSS" | head -8; rm -f "$PATHS"; exit 1; }
 echo '  OK 无线栈 / Argon / SSH / 串口 / TTYD 全部避开（prune.keep 零交集）'
 
-# ⑤ 幂等追加：先删上一轮回灌块，再写新块。
-if grep -q '^# ── FROM INSTALLED BASELINE' "$P" 2>/dev/null; then
-  awk '/^# ── FROM INSTALLED BASELINE/{exit} {print}' "$P" > "$P.tmp" && mv -f "$P.tmp" "$P"
-fi
+# ⑤ 幂等替换（第 19 次修）：块用显式 begin/end 包起来，只替换块本身，
+#    🔴 保留块之后 r13~r17 追加的所有条目（尤其 usr/sbin/ip6tables）。
+#    旧写法 awk '/起始行/{exit} {print}' 会吃掉后面全部内容 → CI 自检 FAIL。
 {
-  printf '# ── FROM INSTALLED BASELINE：capture/installed-allowlist.txt（双机型共用，勿手改）──\n'
-  cat "$BLOCK"
-} >> "$P"
-rm -f "$BLOCK"
-echo "  prune.list 现 $(grep -cv '^#\|^[[:space:]]*$' "$P") 条"
+  printf '# ── FROM INSTALLED BASELINE (begin)：capture/installed-allowlist.txt（双机型共用，勿手改）──\n'
+  cat "$PATHS"
+  printf '# ── FROM INSTALLED BASELINE (end) ──\n'
+} > "$BLOCK"
+awk -v blk="$BLOCK" -f tools/baseline-block.awk "$P" > "$P.tmp" \
+  && cat "$P.tmp" > "$P" && rm -f "$P.tmp" \
+  || { echo '::error::prune.list 幂等替换失败'; rm -f "$BLOCK" "$PATHS"; exit 1; }
+rm -f "$BLOCK" "$PATHS"
+echo "  prune.list 现 $(grep -cv '^#\|^[[:space:]]*$' "$P") 条（含块后历史追加项）"
 
-# ⑥ 自检
-sh verify.sh
+# ⑥ 自检（失败时给 GitHub 明确上下文，不再裸 exit 1）
+sh verify.sh || { echo '::error::回灌后自检未通过，停止（避免产出缺精简项的固件）'; exit 1; }
 [ "$DRY" = 1 ] && { echo '  --dryrun：只回灌与自检，未构建'; exit 0; }
 
 case "$DEV" in all) DEVS='cucc_vs010 cmcc_rax3000q' ;; cucc_vs010|cmcc_rax3000q) DEVS=$DEV ;; *) echo '::error::机型错'; exit 1;; esac

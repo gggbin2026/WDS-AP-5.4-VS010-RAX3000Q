@@ -1201,6 +1201,54 @@ PYEOF18
 grep -Fq '第 18 次' CHANGELOG.md && grep -Fq '第 18 次' README.md \
   && ok 'CHANGELOG / README 已记第 18 次' || bad '第 18 次文档未同步'
 
+
+echo "── 第 19 次：baseline 幂等截断 BUG 修复（CI Apply installed baseline 退出 1）──"
+A=tools/apply-installed-baseline.sh
+AWK=tools/baseline-block.awk
+[ -s "$AWK" ] && ok '独立幂等替换 awk 在位' || bad '缺 baseline-block.awk'
+grep -Fq 'FROM INSTALLED BASELINE (begin)' "$A" && grep -Fq 'FROM INSTALLED BASELINE (end)' "$A" \
+  && ok '回灌块带显式 begin/end 标记' || bad '块无起止标记'
+grep -Fq 'baseline-block.awk' "$A" \
+  && ok '脚本调用幂等替换（不再用 exit 截断）' || bad '仍是旧截断写法'
+! grep -Fq "awk '/^# ── FROM INSTALLED BASELINE/{exit}" "$A" \
+  && ok '旧截断写法已移除' || bad '旧截断写法仍在'
+grep -Fq '回灌后自检未通过' "$A" \
+  && ok '自检失败有 ::error:: 上下文' || bad '自检失败无明确报错'
+# 🔴 回归 mock：基线块在【中间】，后面有注释 + 第 15 次追加的 ip6tables。
+#    连跑两次替换，断言块后条目一条不丢、块只出现一次、结果幂等。
+T=/tmp/.vs010-r19.$$
+cat > "$T.blk" <<'MOCKBLK'
+# ── FROM INSTALLED BASELINE (begin)：capture/installed-allowlist.txt（双机型共用，勿手改）──
+etc/config/ddns
+usr/lib/lua/luci/controller/ddns.lua
+# ── FROM INSTALLED BASELINE (end) ──
+MOCKBLK
+cat > "$T.in" <<'MOCKIN'
+# 固定精简项
+etc/config/firewall
+
+# ── FROM INSTALLED BASELINE：capture/installed-allowlist.txt（双机型共用，勿手改）──
+etc/config/ddns
+usr/lib/lua/luci/controller/ddns.lua
+
+# 第 15 次：删 ip6tables 符号链接 → 总览 IPv6 WAN/DUID 块自动消失
+usr/sbin/ip6tables
+MOCKIN
+awk -v blk="$T.blk" -f "$AWK" "$T.in" > "$T.out1"
+awk -v blk="$T.blk" -f "$AWK" "$T.out1" > "$T.out2"
+grep -Fxq 'usr/sbin/ip6tables' "$T.out1" && grep -Fxq 'usr/sbin/ip6tables' "$T.out2" \
+  && ok '幂等替换保留块后追加项（ip6tables 不丢）' || bad '块后条目被截断'
+[ "$(grep -c 'FROM INSTALLED BASELINE (begin)' "$T.out1")" = 1 ] \
+  && ok '块只出现一次（不重复追加）' || bad '块重复'
+cmp -s "$T.out1" "$T.out2" && ok '连续两次替换结果完全一致（幂等）' || bad '幂等失败'
+rm -f "$T.blk" "$T.in" "$T.out1" "$T.out2"
+grep -Fxq 'usr/sbin/ip6tables' build/prune.list \
+  && ok '真实 prune.list 保留第 15 次 ip6tables 项' || bad '真实 prune.list 丢了 ip6tables'
+[ "$(grep -c 'FROM INSTALLED BASELINE (end)' build/prune.list)" = 1 ] \
+  && ok '真实 prune.list 块起止各一次' || bad '真实 prune.list 块标记异常'
+grep -Fq '第 19 次' CHANGELOG.md && grep -Fq '第 19 次' README.md \
+  && ok 'CHANGELOG / README 已记第 19 次' || bad '第 19 次文档未同步'
+
 echo "── 语法 ──"
 e=0
 for f in $(find . -type f \( -name '*.sh' -o -path 'files/*' -o -path 'files.vs010/*' -o -path 'files.rax3000q/*' \) ! -name '*.md' ! -name '*.html' ! -name '*.lua' ! -name '*.htm' ! -name 'firmware_model'); do
@@ -1248,5 +1296,5 @@ if b: print('  FAIL run 块',b); sys.exit(1)
 PYEOF
 
 echo
-[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 18 次：合并冲突善后 / 一键落位 / 前 17 次全继承 / 固件内容等价 r17' || echo 'RESULT: FAIL'
+[ "$F" = 0 ] && echo 'RESULT: PASS —— 第 19 次：修 baseline 幂等截断 / CI 报错 / 前 18 次全继承 / 固件内容等价 r17' || echo 'RESULT: FAIL'
 exit $F
