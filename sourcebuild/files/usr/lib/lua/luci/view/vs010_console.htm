@@ -1,0 +1,10 @@
+<%+header%>
+<h2 name="content"><% if mode == "wds" then %>WDS 配对 / 机器狗 / 无线 DHCP Snooping<% else %>AP 弱信号 / 机器狗 / 无线 DHCP Snooping<% end %></h2>
+<div class="cbi-section-descr">只读状态汇总。修改请走 TTYD / SSH；刷新本页可重新采集。常驻检查由 vs010-tick 统一调度。</div>
+<pre style="white-space:pre-wrap;word-break:break-all;font-family:monospace;font-size:13px;line-height:1.5;background:#f7f7f7;padding:12px;border-radius:6px"><%= out %></pre>
+<div class="cbi-section-descr">
+<% if mode == "wds" then %><a href="/cgi-bin/luci/admin/status/vs010_bridge">网桥状态</a><% else %><a href="/cgi-bin/luci/admin/status/vs010_ap">AP 状态</a><% end %>
+ ｜ <a href="/cgi-bin/luci/admin/status/vs010_ports">网口速率</a>
+ ｜ <a href="/cgi-bin/luci/admin/status/vs010_role">主题与角色</a>
+</div>
+<%+footer%>

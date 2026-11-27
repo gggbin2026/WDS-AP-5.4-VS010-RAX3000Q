@@ -1,0 +1,10 @@
+# 编译产物 / 本地源码树，不进仓库
+/out/
+/openwrt/
+*.ubi
+*.sha256sums
+/tmp/
+.DS_Store
+Thumbs.db
+__pycache__/
+*.pyc

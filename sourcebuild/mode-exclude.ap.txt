@@ -1,0 +1,5 @@
+# 第 20 次：AP 固件【不注入】的另一模式界面
+# 路径相对 files/，只删构建临时树，仓库源保持不变。
+www/bridge/index.html
+www/cgi-bin/bridge
+usr/lib/lua/luci/view/vs010_bridge.htm

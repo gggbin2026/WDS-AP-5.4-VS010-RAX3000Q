@@ -1,0 +1,27 @@
+#!/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+# DHCP / 无线 Snooping：默认 monitor（只记录，不阻断、不重启），不依赖 ebtables
+STATE=/etc/vs010/snooping.state
+log(){ logger -t dhcp-guard "$*" 2>/dev/null || true; }
+scan(){
+  # 只读：从系统日志里找本机之外宣告的 DHCP 服务器痕迹；无 tcpdump 也不报错
+  n=$(logread 2>/dev/null | grep -ci 'DHCP.*OFFER.*from' 2>/dev/null | head -1)
+  [ -n "$n" ] || n=0
+  printf 'last_scan=%s illegal_offers=%s\n' "$(date +%H:%M:%S)" "$n" > "$STATE"
+  [ "$n" != "0" ] && log "监测到 $n 条可疑 DHCP OFFER（monitor 模式未阻断）"
+  # 若 ebtables 可用且用户显式 on，则下只读阻断规则（失败只告警）
+  if [ "$(uci -q get dhcp-guard.main.mode 2>/dev/null)" = block ] && command -v ebtables >/dev/null 2>&1; then
+    ebtables -A FORWARD -p IPv4 --ip-proto udp --ip-sport 67 -j DROP 2>/dev/null \
+      || log 'ebtables 规则未生效（不影响启动）'
+  fi
+}
+case "${1:-once}" in
+  loop) while :; do scan; sleep "$(uci -q get dhcp-guard.main.interval 2>/dev/null || echo 60)"; done ;;
+  once) scan; cat "$STATE" ;;
+  on)  uci -q set dhcp-guard.main.mode=block; uci -q commit; echo '已切 block（需 ebtables）' ;;
+  off) uci -q set dhcp-guard.main.mode=monitor; uci -q commit; echo '已回 monitor（只记录）' ;;
+  status) echo "mode  : $(uci -q get dhcp-guard.main.mode 2>/dev/null || echo monitor)"
+          echo "last  : $(cat "$STATE" 2>/dev/null || echo 尚未扫描)"
+          echo "ebtables: $(command -v ebtables >/dev/null 2>&1 && echo 可用 || echo 未装-仅监测)" ;;
+  *) echo '用法: dhcp-guard loop|once|on|off|status' ;;
+esac

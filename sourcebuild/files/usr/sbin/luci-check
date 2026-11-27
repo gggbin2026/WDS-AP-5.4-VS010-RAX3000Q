@@ -1,0 +1,37 @@
+#!/bin/sh
+# 只读：核验 LuCI / Argon 主题界面是否具备「不报错」条件
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+uci(){ command uci "$@" 2>/dev/null; }
+bad=0
+say(){ printf '  %-34s %s\n' "$1" "$2"; }
+warn(){ bad=$((bad+1)); }
+echo '── LuCI / Argon 主题自检 ──'
+SECT=$(uci show luci 2>/dev/null | sed -n 's/^luci\.\([^.=]*\)=core$/\1/p' | head -n 1)
+say 'core 段名' "${SECT:-（无）}"
+[ "$SECT" = main ] && echo '    ✅ named main（不会触发 dispatcher 取 nil）' || {
+  echo '    ❌ 非 named main → 主题会异常'; warn; }
+MB=$(uci -q get luci.main.mediaurlbase 2>/dev/null)
+say 'mediaurlbase' "${MB:-（缺）}"
+[ "$MB" = /luci-static/argon ] || { echo '    ❌ 不是 Argon'; warn; }
+[ -f /usr/lib/lua/luci/view/themes/argon/header.htm ] \
+  && echo '    ✅ Argon header 模板在位' || { echo '    ❌ 模板缺'; warn; }
+[ -f /www/luci-static/argon/css/cascade.css ] \
+  && echo '    ✅ Argon 静态资源在位' || { echo '    ❌ 静态资源缺'; warn; }
+RH=$(uci -q get uhttpd.main.redirect_https 2>/dev/null || echo 0)
+LP=$(uci -q get uhttpd.main.lua_prefix 2>/dev/null)
+say 'redirect_https' "$RH"; say 'lua_prefix' "${LP:-（缺）}"
+[ "$RH" = 0 ] || { echo '    ❌ 会 302 到无证书的 443'; warn; }
+case "$LP" in *'/cgi-bin/luci='*) echo '    ✅ LuCI 入口可访问';; *) echo '    ❌ LuCI 入口未配'; warn;; esac
+[ -f /usr/lib/lua/luci/sgi/uhttpd.lua ] && echo '    ✅ sgi/uhttpd.lua 在位' || { echo '    ❌ sgi 缺'; warn; }
+C=$(ls /usr/lib/lua/luci/controller/*.lua 2>/dev/null | wc -l)
+say 'controller 数量' "$C"
+IDX=0
+for f in /tmp/luci-indexcache /var/luci-indexcache /tmp/luci-modulecache /var/luci-modulecache; do
+  [ -e "$f" ] && IDX=$((IDX+1)); done
+say '残留 indexcache' "$IDX"
+[ "$IDX" -eq 0 ] || echo '    ⚠ 有缓存，运行期首次访问会自动重建，必要时 /etc/init.d/vs010-luci-fix start'
+[ -f /etc/config/argon ] && echo '    ✅ /etc/config/argon 在位（Argon 设置页正常）' || {
+  echo '    ⚠ Argon 设置页配置缺（主题本身仍可用）'; }
+echo
+[ "$bad" -eq 0 ] && echo 'RESULT: PASS —— 主题界面具备不报错条件' \
+                 || echo "RESULT: WARN —— $bad 项需检查（见上）"

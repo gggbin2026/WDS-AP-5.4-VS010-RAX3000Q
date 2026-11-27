@@ -1,0 +1,309 @@
+name: Build 5.4 source firmware (r25 · 3000Q / VS010 · WDS + AP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      device:
+        description: '机型（010 为实验，默认只编 3000Q）'
+        required: true
+        default: 'cmcc_rax3000q'
+        type: choice
+        options: [cmcc_rax3000q, cucc_vs010, all]
+      mode:
+        description: '模式'
+        required: true
+        default: 'all'
+        type: choice
+        options: [all, wds, ap]
+      vs010_experimental:
+        description: '编译 VS010 源码线（已补 VS010 板级 BDF）'
+        required: true
+        default: 'true'
+        type: choice
+        options: [true, false]
+      vs010_switch_oem:
+        description: 'VS010 改用实机 switch 档（⚠ 需 TTL，默认不勾）'
+        required: false
+        default: 'false'
+        type: choice
+        options: [false, true]
+
+permissions:
+  contents: write
+
+env:
+  REPO_URL: https://github.com/kkstone/immortalwrt-ipq50xx
+  REPO_BRANCH: openwrt-21.02
+  TZ: Asia/Shanghai
+  KEEP_RELEASES: 5
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device: [cmcc_rax3000q, cucc_vs010]
+        mode: [wds, ap]
+
+    steps:
+    - name: Gate
+      id: gate
+      run: |
+        D='${{ github.event.inputs.device }}'; M='${{ github.event.inputs.mode }}'
+        EXP='${{ github.event.inputs.vs010_experimental }}'
+        GO=true
+        [ "$D" = all ] || [ "$D" = '${{ matrix.device }}' ] || GO=false
+        [ "$M" = all ] || [ "$M" = '${{ matrix.mode }}' ] || GO=false
+        case '${{ matrix.device }}' in
+          cucc_vs010)
+            if [ "$EXP" != true ]; then
+              echo "::notice::VS010 源码线已关闭（vs010_experimental=false）。010 的 VS010 板级 BDF 已在 diy-part1 注入，开启即可编译。"
+              GO=false
+            fi ;;
+        esac
+        echo "go=$GO" >> $GITHUB_OUTPUT
+        echo "[gate] device=${{ matrix.device }} mode=${{ matrix.mode }} → $GO"
+
+    - name: Checkout
+      if: steps.gate.outputs.go == 'true'
+      uses: actions/checkout@v4
+
+    - name: Initialization environment
+      if: steps.gate.outputs.go == 'true'
+      env:
+        DEBIAN_FRONTEND: noninteractive
+      run: |
+        sudo apt-get -qq update
+        sudo apt-get -qq install -y build-essential clang flex bison g++ gawk gcc-multilib \
+          g++-multilib gettext git libncurses5-dev libssl-dev python3 python3-distutils \
+          rsync unzip zlib1g-dev file wget cpio bc squashfs-tools device-tree-compiler
+        sudo timedatectl set-timezone "$TZ"
+        sudo mkdir -p /workdir && sudo chown $USER:$GROUPS /workdir
+        sh sourcebuild/tools/verify.sh
+
+    - name: Validate real-hardware backup evidence (r24)
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        set -eu
+        BK=$(ls reference/backup/VS010-flash-backup-*.tar.gz 2>/dev/null | tail -1)
+        [ -n "$BK" ] || { echo "::error::缺实机备份包 reference/backup/VS010-flash-backup-*.tar.gz"; exit 1; }
+        python3 sourcebuild/tools/parse-vs010-backup.py "$BK" | tee /tmp/backup-evidence.txt
+        python3 - <<'PY'
+        import json,pathlib
+        j=json.loads(pathlib.Path('reference/backup/VS010-备份解析.json').read_text())
+        assert j['mibib']['num_parts']==16, 'MIBIB 分区数不是实测的 16'
+        root=[p for p in j['mibib']['parts'] if p['name']=='rootfs'][0]
+        assert root['offset']=='0x00900000' and root['size']=='0x06e00000', 'rootfs 分区与实测不符'
+        assert 'ubi.mtd=rootfs' not in j['uboot_env'].get('bootargs',''), 'U-Boot env 意外提供 ubi.mtd，需重审 DTS 结论'
+        assert not j['cdt']['wifi_board_id_found'], 'CDT 出现 wifi board-id，需重审 BDF 选择'
+        print('  OK 实证校验：16 分区 / rootfs 0x900000 / bootargs 来自 DTS / CDT 不含 wifi board-id')
+        PY
+        echo "[backup] OK MIBIB-U-Boot-CDT-ART 全部与实机备份一致"
+
+    - name: Clone source code
+      if: steps.gate.outputs.go == 'true'
+      working-directory: /workdir
+      run: |
+        git clone --depth 1 $REPO_URL -b $REPO_BRANCH openwrt
+        ln -sf /workdir/openwrt $GITHUB_WORKSPACE/openwrt
+
+    - name: DIY part 1 (before feeds update)
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        chmod +x sourcebuild/diy-part1.sh
+        cd openwrt && $GITHUB_WORKSPACE/sourcebuild/diy-part1.sh '${{ matrix.device }}'
+
+    - name: Optional - VS010 OEM switch profile (from vs010.dtb)
+      if: steps.gate.outputs.go == 'true' && matrix.device == 'cucc_vs010' && github.event.inputs.vs010_switch_oem == 'true'
+      run: |
+        python3 sourcebuild/tools/apply-vs010-switch-oem.py \
+          --dts openwrt/target/linux/ipq50xx/dts/ipq5000-vs010.dts
+        echo "[switch] ⚠ 已切到 vs010.dtb 实机档：cpu=0x40 / lan=0x1e / wan=0x00 / 8 对 initvals"
+        echo "[switch] ⚠ 02_network 的 WAN/LAN 标签需实机 swconfig 核对；刷前 TTL 在手边"
+        grep -n 'switch_.*_bmp' openwrt/target/linux/ipq50xx/dts/ipq5000-vs010.dts
+
+    - name: Update feeds
+      if: steps.gate.outputs.go == 'true'
+      run: cd openwrt && ./scripts/feeds update -a
+
+    - name: Install feeds
+      if: steps.gate.outputs.go == 'true'
+      run: cd openwrt && ./scripts/feeds install -a
+
+    - name: Replace Argon theme with v2.4.3 (Lua-compatible)
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        cd openwrt
+        rm -rf feeds/luci/themes/luci-theme-argon
+        git clone --depth 1 -b v2.4.3 https://github.com/jerrykuku/luci-theme-argon.git \
+          feeds/luci/themes/luci-theme-argon
+        grep -n 'PKG_VERSION\|PKG_RELEASE' feeds/luci/themes/luci-theme-argon/Makefile
+        echo "[argon] ✅ v2.4.3 / Lua .htm，与 21.02 LuCI 兼容（v2.4.4+ 是 ucode，不能装）"
+
+    - name: Assemble files (manifest + mode isolation)
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        set -eu
+        MODE='${{ matrix.mode }}'; D='${{ matrix.device }}'
+        rm -rf openwrt/files; mkdir -p openwrt/files/etc/rc.d
+        EX="sourcebuild/mode-exclude.$MODE.txt"
+        N=0; SKIP=0
+        while IFS= read -r p; do
+          [ -n "$p" ] || continue
+          case "$p" in \#*) continue ;; esac
+          if grep -Fxq "$p" "$EX" 2>/dev/null; then SKIP=$((SKIP+1)); continue; fi
+          [ -f "sourcebuild/files/$p" ] || { echo "::error::清单里的文件不存在: $p"; exit 1; }
+          mkdir -p "openwrt/files/$(dirname "$p")"
+          install -m 644 "sourcebuild/files/$p" "openwrt/files/$p"
+          case "$p" in
+            usr/sbin/*|usr/bin/*|etc/init.d/*|www/cgi-bin/*|*.sh) chmod 755 "openwrt/files/$p" ;;
+          esac
+          N=$((N+1))
+        done < sourcebuild/files.manifest
+        # 开机自启链接（squashfs 只读，构建期必须自备）
+        for pair in 18:vs010-luci-fix 96:vs010-tick 99:vs010-mode; do
+          n=${pair%%:*}; s=${pair##*:}
+          ln -sf "../init.d/$s" "openwrt/files/etc/rc.d/S${n}${s}"
+        done
+        printf '%s\n' "$MODE" > openwrt/files/etc/vs010/mode
+        printf 'Nwrt-QSDK12.2-5.4-%s-%s-%s\n' "$(date +%Y%m%d-%H%M)" "$D" "$MODE" \
+          > openwrt/files/etc/firmware_build
+        echo "[files] $D/$MODE 注入 $N 文件，排除另一模式 $SKIP 项；常驻仅 vs010-tick"
+
+    - name: Load custom configuration + DIY part 2
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        D='${{ matrix.device }}'
+        case "$D" in cucc_vs010) CFG=sourcebuild/.config.vs010 ;; *) CFG=sourcebuild/.config.rax3000q ;; esac
+        cp "$CFG" openwrt/.config
+        chmod +x sourcebuild/diy-part2.sh
+        cd openwrt && $GITHUB_WORKSPACE/sourcebuild/diy-part2.sh
+
+    - name: Download package
+      if: steps.gate.outputs.go == 'true'
+      run: |
+        cd openwrt
+        mkdir -p dl
+        # 上游 QSDK 内核与 backports 固定包（make download 可能取不到，先预置）
+        for u in \
+          "https://www.dropbox.com/scl/fi/gu7ge6jmefn72ttuop1zs/linux-5.4-qsdk-11.5.0.5.tar.xz?rlkey=tdpq0ye35x290frbh7i8uqrm8&st=jjvegqrr&dl=1|linux-5.4-qsdk-11.5.0.5.tar.xz" \
+          "https://www.dropbox.com/scl/fi/9ts30p2csnlb9imaf8k68/backports-20210222-5.4-qsdk-11.5.0.5.tar.xz?rlkey=sntbyfjgg86gu2uoocgb9ggp1&st=7w81hl56&dl=1|backports-20210222-5.4-qsdk-11.5.0.5.tar.xz" ; do
+          url=${u%%|*}; name=${u##*|}
+          [ -s "dl/$name" ] || curl -fsSL --max-time 180 "$url" -o "dl/$name" || echo "[dl] $name 预置失败，交给 make download 兜底"
+        done
+        make defconfig
+        make download -j8
+        find dl -size -1024c -delete || true
+
+    - name: Compile the firmware
+      if: steps.gate.outputs.go == 'true'
+      id: compile
+      run: |
+        cd openwrt
+        echo "[compile] $(nproc) 线程"
+        make -j$(nproc) || make -j1 || make -j1 V=s
+        echo "status=success" >> $GITHUB_OUTPUT
+        echo "STAMP=$(date +%Y%m%d-%H%M)" >> $GITHUB_ENV
+
+    - name: Check space usage
+      if: steps.gate.outputs.go == 'true' && !cancelled()
+      run: df -hT
+
+    - name: Rename firmware with full date
+      if: steps.compile.outputs.status == 'success'
+      id: organize
+      run: |
+        set -eu
+        cd openwrt/bin/targets/ipq50xx/arm
+        rm -rf packages
+        D='${{ matrix.device }}'; M='${{ matrix.mode }}'
+        case "$D" in cucc_vs010) TAG=cucc_vs010 ;; *) TAG=cmcc_rax3000qy ;; esac
+        STAMP=$(date +%Y%m%d-%H%M)
+        mkdir -p "$GITHUB_WORKSPACE/out"
+        for f in *nand-factory.ubi; do
+          [ -f "$f" ] || continue
+          out="Nwrt-QSDK12.2-5.4-${STAMP}-ipq50xx-arm-${TAG}-${M}-squashfs-nand-factory.ubi"
+          cp "$f" "$GITHUB_WORKSPACE/out/$out"
+          echo "[name] $out"
+        done
+        sha256sum "$GITHUB_WORKSPACE/out"/* > "$GITHUB_WORKSPACE/out/sha256sums.txt"
+        echo "FIRMWARE=$GITHUB_WORKSPACE/out" >> $GITHUB_ENV
+        echo "status=success" >> $GITHUB_OUTPUT
+
+    - name: Upload firmware
+      if: steps.organize.outputs.status == 'success'
+      uses: actions/upload-artifact@v4
+      with:
+        name: fw-5.4-${{ matrix.device }}-${{ matrix.mode }}-${{ github.run_id }}
+        path: ${{ env.FIRMWARE }}
+        retention-days: 90
+
+    - name: Release
+      if: steps.organize.outputs.status == 'success'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: fw-5.4-${{ github.run_id }}-${{ matrix.device }}-${{ matrix.mode }}
+        name: 5.4 ${{ matrix.device }} / ${{ matrix.mode }} · ${{ github.run_id }}
+        body: |
+          **源码编译线 · 5.4-QSDK 内核（kkstone/immortalwrt-ipq50xx @ openwrt-21.02）**
+
+          🔴 **VS010 板级参数已按仓库实机资料修正（r23）**：按键只用 GPIO34(wps)、
+          LED 为 mesh GPIO33 / pwr GPIO31、bootargs 补回 `ubi.mtd=rootfs swiotlb=1`，
+          分区按大分区 U-Boot（rootfs 0x06e00000）。详见 `sourcebuild/reference/VS010-实机参数对照表.md`。
+          switch 默认保留已验证档，可选 `vs010_switch_oem` 切到实机值。
+
+          🔴 **VS010 无线已修（r22→r24 本机校准）**：BDF body 改从用户上传的本机
+          `0:ART @0x1000 / @0x26800` 直接提取（100% 本机校准，不再是 99.2% 相似的通用版），
+          容器头 `qmi-board-id=36/96` 沿用 kkstone 已验证格式。刷完 `vs010-wifi-check` 验 `iw dev`。
+
+          🔴 **r25 单线 + 实机资产 + 界面增强**：只留本 workflow（融合线已移除）；
+          BDF / CDT / MIBIB / ART 原始二进制与 `VS010-实机参数.log`（✅ 实机读取、可直接使用）
+          落在 `reference/vs010-oem/`；网桥/AP 界面新增 **链接速率** 与 **无线芯片温度**；
+          网桥模式**只用 5G**（2.4G 关闭）、AP 模式**2.4G 作为 AP 用**。
+          验收基线见 `STANDARDS.md`（稳定 / 低内存 / 无线开启快 / SSH+串口必备）。
+
+          🔴 **r24 实机备份实证**：MIBIB 为 **16 分区**（128KiB 块单位，rootfs `0x00900000` /
+          110 MiB）；U-Boot 为 `2016.01-3e89586-godsun (2026-08-14)`，env 的 bootargs 只有
+          `console=ttyMSM0,115200n8` → `ubi.mtd=rootfs swiotlb=1` **由内核 DTS 的
+          bootargs-append 提供**，自检已断言不可删。CDT 是 DDR 参数表，不含 wifi board-id。
+          详见 `reference/backup/VS010-实机备份取证.md`。
+          010 按键 GPIO / 网口排序仍沿用已验证能启动的 3000Q 骨架，首次刷建议 TTL 在手边。
+
+          | 项 | 值 |
+          |---|---|
+          | 管理地址 | `172.10.10.241` / `255.255.252.0`（WDS 客户端 `.242`） |
+          | 账号 | `root` / `admin`（SSH · 串口 ttyMSM0 · TTYD） |
+          | 主题 | **Argon 2.4.3**（Lua 版，最后一个兼容 21.02 的 tag） |
+          | 模式界面 | 网桥 `/bridge/` 或 AP `/ap/`，互不混装 |
+          | 网络 | WAN+LAN 桥接 · STP 开 · IPv6/DHCP/防火墙全关 |
+
+          **插件**：仅 LuCI + Argon 2.4.3 + TTYD + dropbear + ethtool/swconfig + 闭源加速无关项；新增 `portstat` / `wifi-check` / `luci-check` / `ntp-sync` / `dhcp-guard`(monitor) / **机器狗 `bridge-watchdog`（🔴 出厂停用）**。常驻守护仅 `vs010-tick` 一个进程。
+
+          🔴 <u>**WDS 主 / 客户端两端都绝不能开 DHCP 服务端**</u>：本机 `dhcp.lan.ignore=1` 并停 dnsmasq，内网只允许上级一台 DHCP，否则地址会乱。
+
+          **刷机必读**：按机型严格对应（`cucc_vs010`↔010、`cmcc_rax3000qy`↔3000Q），U-Boot web 刷，**别勾「保留配置」**。
+        files: |
+          ${{ env.FIRMWARE }}/*.ubi
+          ${{ env.FIRMWARE }}/sha256sums.txt
+
+  cleanup:
+    needs: build
+    if: always() && needs.build.result == 'success'
+    runs-on: ubuntu-22.04
+    steps:
+    - name: Keep only latest N firmware releases
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        KEEP: ${{ env.KEEP_RELEASES }}
+      run: |
+        gh release list --repo "$GITHUB_REPOSITORY" --limit 200 \
+          --json tagName,createdAt --jq 'map(select(.tagName|startswith("fw-5.4-"))) | sort_by(.createdAt) | reverse | .[] | .tagName' \
+          > /tmp/tags
+        n=0
+        while read -r t; do
+          n=$((n+1))
+          [ "$n" -le "$KEEP" ] && continue
+          echo "[cleanup] 删除 $t"
+          gh release delete "$t" --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes || true
+        done < /tmp/tags

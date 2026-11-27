@@ -1,0 +1,61 @@
+#!/bin/sh /etc/rc.common
+# ★ LuCI / Argon 主题不报错修复（START=18 → 早于 uhttpd 的 50）
+# 只做 4 件事，全部幂等；绝不删 controller、绝不改 dispatcher.lua、绝不重启。
+# 官方 dispatcher.lua:225 读 luci.config.main.mediaurlbase —— core 段必须是
+# named section "main"；匿名段会取到 nil → 主题/页面异常（旧仓 427 那类错）。
+START=18
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+uci(){ command uci "$@" 2>/dev/null; }
+log(){ logger -t vs010-luci-fix "$*" 2>/dev/null || true; }
+
+luci_fix(){
+  # ① named main：用 rename 把第一个 core 段直接改名，绝不 delete @core[0]
+  #    （上一版先 set luci.main=core 再 delete @core[0]，可能把刚建的 main 删掉，
+  #     反而制造主题异常 —— 这里改为一步 rename，零创建零删除。）
+  # 按「段名」判断，不依赖 uci get 的退出码（部分版本对不存在项返回空串但退出 0）
+  sect=$(uci show luci 2>/dev/null \
+         | sed -n 's/^luci\.\([^.=]*\)=core$/\1/p' | head -n 1)
+  if [ "$sect" != main ]; then
+    if [ -n "$sect" ]; then
+      uci -q rename "luci.$sect=main"        # 匿名段一步改名，零创建零删除
+    else
+      uci -q set luci.main=core
+    fi
+    uci -q set luci.main.lang=zh_cn
+    uci -q set luci.main.resourcebase=/luci-static/resources
+    log 'luci core 段已归一为 named main'
+  fi
+  # ② 第 17 次：注册两个主题，但【绝不覆盖用户选中的那个】
+  #   上一版这里无条件把 mediaurlbase 改回 /luci-static/argon，用户切到新版
+  #   argon2 后一开机就被打回去了 —— 已修：只在「空 / 指向不存在的目录」时兜底。
+  uci -q set luci.themes.Argon=/luci-static/argon
+  uci -q set luci.themes.Argon_243=/luci-static/argon2
+  cur=$(uci -q get luci.main.mediaurlbase 2>/dev/null)
+  case "$cur" in
+    /luci-static/argon|/luci-static/argon2) : ;;   # 用户选中的两个 Argon，尊重
+    *) uci -q set luci.main.mediaurlbase=/luci-static/argon ;;   # bootstrap/空/异常 → 回官方 Argon
+  esac
+  uci -q commit luci
+
+  # ③ 清 indexcache：官方 uci-defaults 只清 /var，dispatcher 实际用 /tmp
+  #    （dispatcher.lua:394/398 明确提示删 /tmp/luci-indexcache）。两侧都清，
+  #    避免精简掉 7 个 controller 后旧缓存里 require 到已删模块。
+  rm -rf /tmp/luci-indexcache /tmp/luci-modulecache \
+         /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
+
+  # ④ 🔴 官方 rootfs 没有 uhttpd.crt/key，却 redirect_https=1 + listen 443
+  #    → 所有 HTTP 80 被 302 到起不来的 443，LuCI 主题界面打不开。
+  if [ ! -s /etc/uhttpd.crt ] || [ ! -s /etc/uhttpd.key ]; then
+    uci -q set uhttpd.main.redirect_https=0
+    uci -q delete uhttpd.main.listen_https
+    uci -q commit uhttpd
+    log '无证书：已关 HTTPS 重定向与 443 监听（纯 HTTP 80）'
+  fi
+  # ⑤ lua_prefix 兜底（官方已配，丢了就补）
+  [ -n "$(uci -q get uhttpd.main.lua_prefix 2>/dev/null)" ] || {
+    uci -q set uhttpd.main.lua_prefix='/cgi-bin/luci=/usr/lib/lua/luci/sgi/uhttpd.lua'
+    uci -q commit uhttpd
+  }
+}
+start(){ luci_fix; }
+boot(){ luci_fix; }
