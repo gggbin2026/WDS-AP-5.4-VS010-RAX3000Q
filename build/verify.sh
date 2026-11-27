@@ -317,7 +317,7 @@ NYAML=$( { grep '^import ' build/verify.sh; grep '^from ' build/verify.sh; } | g
 # 负例：把注入树全设成 644，真跑构建，确认产物里脚本仍是 755
 python3 - <<'PYM' || F=1
 import shutil,tempfile,os,subprocess,stat,pathlib,glob
-src='/data/workspace/_newrepo'
+src=os.getcwd()
 t=tempfile.mkdtemp(); d=os.path.join(t,'repo'); shutil.copytree(src,d,
     ignore=shutil.ignore_patterns('.git','*.bin','*.sha256','3000Q-VS010-固件'))
 # 底座固件单独拷回（构建需要）
