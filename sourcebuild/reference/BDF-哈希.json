@@ -1,9 +1,0 @@
-{
-  "来源": "reference/backup/VS010-flash-backup-20240414-135754.tar.gz → mtd13-0_ART.bin (sha256 e97b8f7a5190171d…)",
-  "说明": "r24 起 BDF body 直接取本机 0:ART，不再用 whmzsu 通用校准（原相似率 99.20% / 97.70%）",
-  "2.4G 裸 BDF": "e7795d7ebeb1d7f0f49b52549c118d035d91b9dc6373444c9ee1b235b55bdf32",
-  "5G 裸 BDF": "5585d4f86eedfceb541ae8f4cd052908098a51cee84cb99ea95f7dacb9bba7ac",
-  "2.4G 容器": "b6035d593d47fdd1c6edd638425d23e3ab61fb4060d60d7048979d363ad68251",
-  "5G 容器": "f9eacb6f9e76f21bba2f2951c1c2ffced98c2a0cfa2f062e1212cfbe6883902d",
-  "容器头": "沿用 kkstone board-cmcc_rax3000q 的 84B 头，仅 qmi-board-id=36 / 96 不同"
-}

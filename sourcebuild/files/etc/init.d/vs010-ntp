@@ -1,8 +1,0 @@
-#!/bin/sh /etc/rc.common
-# 第 20 次：常驻 loop 已并入 /etc/init.d/vs010-tick（单进程分频调度）。
-# 本文件保留仅作 CLI / 手动调试兼容；开机【不再】拉起独立进程，
-# 避免 4 个 shell + 4 个 procd 实例常驻占内存。
-# 对应命令仍可用：/usr/sbin/vs010-ntp status|on|off|once 等。
-START=96
-start(){ echo "vs010-ntp: 已由 vs010-tick 统一调度，无需单独启动"; return 0; }
-stop(){  return 0; }
