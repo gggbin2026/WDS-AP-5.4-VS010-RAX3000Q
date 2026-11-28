@@ -1,0 +1,14 @@
+#!/bin/sh
+# 设备名：WDS 主 WDS-Z / WDS 客户端 WDS-K / AP 模式 AP
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+M=$(cat /etc/vs010/mode 2>/dev/null || echo wds)
+R=$(cat /etc/vs010/role 2>/dev/null || echo ap)
+if [ "$M" = ap ]; then H=AP
+elif [ "$R" = sta ]; then H=WDS-K
+else H=WDS-Z; fi
+uci(){ command uci "$@" 2>/dev/null; }
+[ "$(uci -q get system.@system[0].hostname 2>/dev/null)" = "$H" ] \
+  || { uci -q set system.@system[0].hostname="$H"; uci -q commit system; }
+[ -w /proc/sys/kernel/hostname ] && printf '%s\n' "$H" > /proc/sys/kernel/hostname 2>/dev/null || true
+printf '%s\n' "$H" > /etc/hostname 2>/dev/null || true
+echo "$H"

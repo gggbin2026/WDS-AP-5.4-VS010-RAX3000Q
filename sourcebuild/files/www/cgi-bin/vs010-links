@@ -1,0 +1,131 @@
+#!/bin/sh
+# 第 15 次：/bridge/ 与 /ap/ 共用的精简数据源。
+# 只返回【已插网线（link up）】的网口速率，和「网络与本机 / 地址分配」三卡字段。
+# 全程只读：不写配置、不启停服务、不碰无线。
+PATH=/usr/sbin:/usr/bin:/sbin:/bin; export PATH
+printf 'Content-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\n\r\n'
+jesc(){ printf '%s' "${1:-}" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g' | tr -d '\n\r\t'; }
+num(){ v=$(printf '%s' "${1:-}" | tr -cd '0-9-'); case "$v" in ''|'-') printf '0' ;; *) printf '%s' "$v" ;; esac; }
+
+PHYS=''; PHYDUP=''; PHYDEV=''
+if command -v swconfig >/dev/null 2>&1; then
+  for _d in $(swconfig list 2>/dev/null \
+      | sed -n 's/.*Found:[[:space:]]*\([^[:space:],]*\).*/\1/p'); do
+    _o=$(swconfig dev "$_d" show 2>/dev/null) || continue
+    _s=$(printf '%s\n' "$_o" | grep -oE 'speed:[[:space:]]*[0-9]+' | grep -oE '[0-9]+' | sort -n | tail -n 1)
+    _u=$(printf '%s\n' "$_o" | grep -oE 'duplex:[[:space:]]*(full|half)' | head -n 1 | sed 's/.*://;s/[[:space:]]//g')
+    case "$_s" in ''|*[!0-9]*) continue ;; esac
+    [ "$_s" -gt 0 ] 2>/dev/null || continue
+    PHYS=$_s; PHYDUP=${_u:-full}; PHYDEV=$_d; break
+  done
+fi
+
+LINKS=''
+for d in eth0 eth1 eth2 eth3 lan1 lan2 lan3 lan4 br-lan; do
+  [ -d "/sys/class/net/$d" ] || continue
+  # ★ r28 核验修复：LAN 名对应【实际物理网口】，不是「第几个已插线的口」。
+  #   旧写法按保留顺序递增，只插第 3 个口会错显示成 内网LAN1。
+  #   br-lan 是二层桥，不是物理 LAN 口，直接不进表格。
+  case "$d" in
+    eth0|lan1) LAN_NAME='内网LAN1' ;;
+    eth1|lan2) LAN_NAME='内网LAN2' ;;
+    eth2|lan3) LAN_NAME='内网LAN3' ;;
+    eth3|lan4) LAN_NAME='内网LAN4' ;;
+    *) continue ;;
+  esac
+  carrier=$(cat "/sys/class/net/$d/carrier" 2>/dev/null || echo 0)
+  oper=$(cat "/sys/class/net/$d/operstate" 2>/dev/null || echo unknown)
+  lk=$(ethtool "$d" 2>/dev/null | sed -n 's/.*Link detected: *//p' | head -1)
+  # 只保留已插网线的口：carrier=1 / operstate=up / ethtool 说 yes
+  case "$carrier:$oper:$lk" in
+    *1*|*up*|*yes*) ;; *) continue ;;
+  esac
+  sp=$(cat "/sys/class/net/$d/speed" 2>/dev/null || echo -1)
+  case "$sp" in ''|*[!0-9]*|'-1') sp=0 ;; esac
+  du=$(ethtool "$d" 2>/dev/null | sed -n 's/.*Duplex: *//p' | head -1)
+  [ -z "$du" ] && du='unknown'
+  src='netdev'; note='netdev ethtool 上报'
+  if [ "$d" != br-lan ]; then
+    if [ "$sp" -eq 0 ] 2>/dev/null || { [ "$sp" -le 10 ] 2>/dev/null && [ "$du" = half ]; }; then
+      if [ -n "$PHYS" ]; then sp=$PHYS; du=$PHYDUP; src='phy'
+        note="交换芯片 PHY 实测（$PHYDEV / swconfig），非 netdev 上报"
+      else src='none'; note='驱动不上报；链路正常，以吞吐为准'; fi
+    fi
+  fi
+  [ "$d" = br-lan ] && { du='-'; sp=0; src='bridge'; note='二层桥，速率看成员口'; }
+  [ -n "$LINKS" ] && LINKS="$LINKS,"
+  LINKS="$LINKS{\"lan\":\"$(jesc "$LAN_NAME")\",\"if\":\"$(jesc "$d")\",\"speed\":$(num "$sp"),\"duplex\":\"$(jesc "$du")\",\"src\":\"$src\",\"note\":\"$(jesc "$note")\"}"
+done
+
+ADMIN_IP=$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)
+PROTO=$(uci -q get network.lan.proto 2>/dev/null || echo static)
+BR_NAME=br-lan
+BR_MEM=$(ls /sys/class/net/br-lan/brif 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]*$//')
+[ -z "$BR_MEM" ] && BR_MEM=$(uci -q get network.lan.ifname 2>/dev/null || echo 'eth0 eth1')
+BR_STP=$(uci -q get network.lan.stp 2>/dev/null || echo 1)
+LINK_LOCAL=$(ip -4 addr show dev br-lan 2>/dev/null | awk '/169\.254\./{print $2;exit}')
+[ -z "$LINK_LOCAL" ] && LINK_LOCAL='-'
+IGNORE=$(uci -q get dhcp.lan.ignore 2>/dev/null || echo 1)
+[ "$IGNORE" = 1 ] && DHCP_SRV=off || DHCP_SRV=on
+GW=$(ip -4 route show default 2>/dev/null | awk '/default via/{print $3;exit}')
+[ -z "$GW" ] && GW='-'
+DNS=$(awk '/^nameserver/{print $2;exit}' /etc/resolv.conf 2>/dev/null)
+[ -z "$DNS" ] && DNS='-'
+HOST=$(cat /proc/sys/kernel/hostname 2>/dev/null || echo OpenWrt)
+BOARD=$(cat /tmp/sysinfo/board_name 2>/dev/null || echo unknown)
+MODE=$(cat /etc/firmware_mode 2>/dev/null || echo wds)
+ROLE=$(cat /etc/vs010/role 2>/dev/null || echo ap)
+IPV6=$(uci -q get network.lan.ipv6 2>/dev/null || echo 0)
+FW=$(/etc/init.d/firewall status 2>/dev/null | head -1)
+[ -z "$FW" ] && FW='未运行（已彻底关闭）'
+WD=$(uci -q get wdsdog.main.enabled 2>/dev/null || echo 0)
+SNOOP=$(uci -q get dhcp-guard.main.mode 2>/dev/null || echo monitor)
+# 本机 MAC 由驱动按本机 ART 分区生成后写进 sysfs；这里只读，绝不手填
+MAC=$(cat /sys/class/net/br-lan/address 2>/dev/null \
+      || cat /sys/class/net/eth0/address 2>/dev/null || echo -)
+
+
+# ── r25：无线芯片温度（只读 /sys，无传感器时如实留白，不报错）────────────
+WIFI_T=0; WIFI_TSRC=''; WIFI_TZ=0; WIFI_HAS=0
+# ① ath11k / mac80211 的 phy 温度节点
+for _t in /sys/class/ieee80211/phy*/device/thermal/temp \
+          /sys/class/ieee80211/phy*/thermal/temp \
+          /sys/class/ieee80211/phy*/device/hwmon/hwmon*/temp1_input; do
+  [ -r "$_t" ] || continue
+  _v=$(cat "$_t" 2>/dev/null) || continue
+  case "$_v" in ''|*[!0-9-]*) continue ;; esac
+  [ "$_v" -gt 0 ] 2>/dev/null || continue
+  [ "$_v" -gt 1000 ] && _v=$((_v/1000))
+  WIFI_T=$_v; WIFI_TSRC='ath11k phy thermal (/sys/class/ieee80211)'
+  WIFI_TZ=$((WIFI_TZ+1)); WIFI_HAS=1; break
+done
+# ② thermal_zone 里 type 含 wifi/wlan/ath/q6/radio/pa/rf 的（无线相关，不含纯 CPU）
+if [ "$WIFI_HAS" = 0 ]; then
+  for _z in /sys/class/thermal/thermal_zone*; do
+    [ -r "$_z/type" ] && [ -r "$_z/temp" ] || continue
+    _ty=$(cat "$_z/type" 2>/dev/null)
+    case "$(printf '%s' "$_ty" | tr 'A-Z' 'a-z')" in
+      *wifi*|*wlan*|*ath11k*|*q6*|*radio*|*pa_therm*|*rf*) ;;
+      *) continue ;;
+    esac
+    _v=$(cat "$_z/temp" 2>/dev/null) || continue
+    case "$_v" in ''|*[!0-9-]*) continue ;; esac
+    [ "$_v" -gt 0 ] 2>/dev/null || continue
+    [ "$_v" -gt 1000 ] && _v=$((_v/1000))
+    WIFI_T=$_v; WIFI_TSRC="thermal_zone $(basename "$_z") ($_ty)"
+    WIFI_TZ=$((WIFI_TZ+1)); WIFI_HAS=1; break
+  done
+fi
+[ "$WIFI_HAS" = 0 ] && WIFI_TSRC='无线芯片无温度传感器（如实留白，链路不受影响）'
+WTJSON=$(printf '{"c":%s,"has":%s,"src":"%s","zones":%s}' \
+  "$(num "$WIFI_T")" "$WIFI_HAS" "$(jesc "$WIFI_TSRC")" "$(num "$WIFI_TZ")")
+
+printf '{"ok":1,"links":[%s],"wifi_temp":%s,"net":{"admin_ip":"%s","proto":"%s","link_local":"%s","bridge":{"name":"%s","members":"%s","stp":"%s"},"dhcp_server":"%s","gateway":"%s","dns":"%s","host":"%s","board":"%s","mode":"%s","role":"%s","ipv6":"%s","firewall":"%s","watchdog":"%s","snooping":"%s","phy_speed":"%s","phy_dev":"%s","mac":"%s","mac_src":"%s"}}' \
+  "$LINKS" "$WTJSON" \
+  "$(jesc "$ADMIN_IP")" "$(jesc "$PROTO")" "$(jesc "$LINK_LOCAL")" \
+  "$BR_NAME" "$(jesc "$BR_MEM")" "$(jesc "$BR_STP")" \
+  "$DHCP_SRV" "$(jesc "$GW")" "$(jesc "$DNS")" \
+  "$(jesc "$HOST")" "$(jesc "$BOARD")" "$(jesc "$MODE")" "$(jesc "$ROLE")" \
+  "$(jesc "$IPV6")" "$(jesc "$FW")" "$(jesc "$WD")" "$(jesc "$SNOOP")" \
+  "$(num "$PHYS")" "$(jesc "$PHYDEV")" "$(jesc "$MAC")" \
+  "ART → sysfs（驱动按本机 ART 生成，零手写）"

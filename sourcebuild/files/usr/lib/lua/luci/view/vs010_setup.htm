@@ -1,0 +1,34 @@
+<%+header%>
+<h2 name="content">常用设置 · SSID / 密码 / WDS 主客 / 信道 / 弱信号 / 工作模式</h2>
+<style>
+.vs010Back{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;
+ background:linear-gradient(90deg,#1677d2,#7a5cf0);color:#fff;text-decoration:none;
+ font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(20,60,120,.22);margin:2px 8px 10px 0}
+.vs010Back:hover{filter:brightness(1.12)}
+.vs010Back.ghost{background:#eaf1fa;color:#15518f;box-shadow:none}
+  .vs010Nav{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 12px}
+  .vs010Nav a{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:999px;
+   background:#eaf1fa;color:#15518f;text-decoration:none;font-size:12px;font-weight:700;white-space:nowrap}
+  .vs010Nav a:hover{background:#1677d2;color:#fff}
+  .vs010Nav a.ghost{background:#eef7f0;color:#166534}
+</style>
+<div class="vs010Nav">
+  <a href="/ubnt/">◧ UBNT 概览</a>
+  <a href="/bridge/">⇄ 网桥状态</a>
+  <a href="/ap/">≋ AP 状态</a>
+  <a href="/cgi-bin/luci/admin/status/vs010_setup">⚙ 常用设置</a>
+  <a href="/cgi-bin/luci/">↗ OpenWrt / LuCI</a>
+  <a class="ghost" href="/cgi-bin/luci/admin/logout">🔑 已登录 · 退出</a>
+</div>
+<a class="vs010Back" href="/">← 返回设备状态页（自动按当前模式）</a>
+<div class="cbi-section-descr">
+  本页在 LuCI <b>admin</b> 树下，<b>必须登录才能保存</b>；从主题菜单进入时已经登录，可直接操作。
+  修改后一次性联动写入 <code>/etc/vs010/user.cfg</code> + <code>/etc/config/wireless</code>，开机脚本会读它，<b>重启不丢失</b>；
+  只做一次 <code>/sbin/wifi reload</code>，不重启机器、不重建 radio。
+</div>
+<div id="vs010-setup" data-mode="auto"></div>
+<div style="color:#b91c1c;text-decoration:underline;font-weight:700;margin:14px 0">
+  🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端：本机 WDS 与 AP 均已关闭，内网只允许上级一台 DHCP，否则整网地址会乱
+</div>
+<script src="/vs010-setup.js"></script>
+<%+footer%>

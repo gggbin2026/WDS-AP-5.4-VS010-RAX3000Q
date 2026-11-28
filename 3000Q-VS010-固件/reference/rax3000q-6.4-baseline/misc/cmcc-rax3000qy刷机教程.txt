@@ -1,0 +1,119 @@
+﻿##ssh刷机方案（只适用于rax3000q老系统）
+开启ssh
+https://www.right.com.cn/forum/thread-8111244-1-1.html
+打开winscp
+新建站点——文件协议选择scp——主机名就是路由器ip——输入用户名和密码登录
+把nwrt_rax3000qy_uboot.mbn与nwrt_rax3000qy_mibib.bin放到/tmp文件夹
+mtd write /tmp/nwrt_rax3000qy_uboot.mbn /dev/mtd11
+mtd write /tmp/nwrt_rax3000qy_mibib.bin /dev/mtd1
+reboot
+电脑网口设置静态ip
+192.168.1.8
+子掩码
+255.255.255.0
+电脑网口用网线连接路由器lan
+拔掉电源按住rest，插上电源10秒后松开rest，浏览器输入192.168.1.1
+选择刷机包刷入即可
+
+
+
+
+##ttl刷机方案
+电脑打开tftp
+控制面板-程序-启用或者关闭windows功能-选择TFTP客户端打勾-确认-立刻重启
+
+电脑网口设置静态ip
+192.168.1.8
+子掩码
+255.255.255.0
+电脑网口用网线连接路由器wan
+
+打开TFTP64
+current directory:选择你系统放的文件夹位置
+server interfaces:选择你的网卡（192.168.1.8）
+
+打开Putty
+ttl连接主板 
+选择你的端口（右键win图标找到设备管理器-端口，查看你tll端口）
+波特率115200
+点击打开
+
+路由器插电立马在对话框里疯狂敲回车
+直到出现
+#ipq5018
+输入一下（一行一行输入）
+setenv serverip 192.168.1.254
+setenv ipaddr 192.168.1.1
+tftpboot 0x44000000 2025.09.02.immortalwrt-ipq50xx-arm-cmcc_rax3000q-squashfs-nand-factory.ubi
+flash rootfs
+输入完后等一会出现
+#ipq5018
+然后拔插电源，网线接到lan口即可
+再次打开winscp
+新建站点——文件协议选择scp——主机名就是路由器ip——输入用户名和密码登录
+把nwrt_rax3000qy_uboot.mbn与nwrt_rax3000qy_mibib.bin放到/tmp文件夹
+mtd write /tmp/nwrt_rax3000qy_uboot.mbn /dev/mtd11
+mtd write /tmp/nwrt_rax3000qy_mibib.bin /dev/mtd1
+
+VS010
+mtd write /tmp/u-boot.mbn /dev/mtd11
+mtd write /tmp/mibib.bin /dev/mtd1
+
+reboot
+拔掉电源按住rest，插上电源10秒后松开rest，浏览器输入192.168.1.1
+选择刷机包再次刷入即可
+
+刷机使用的是论坛里的教程，但是现在权限被设置为了255，等于根本无法查看了。
+VS010成功刷入集客N3000
+https://www.right.com.cn/forum/thread-8278709-1-1.html
+
+主要步骤如下：
+1、连接路由器网线后打开 "192.168.2.1/api/set/telnet" 打开SSH
+2、通过SSH软件连接 "192.168.2.1"  用户 "root"
+3、查看分区“cat /proc/mtd | grep rootfs”  我的是 mtd15。
+        例如：mtd15: 02840000 00020000 "rootfs"
+4、将集客固件上传到/tmp/ 从集客官网下 ubi-JIKEAP_N3000.img 就行了
+5、依次输入以下命令
+        umount /overlay && mount -t tmpfs tmpfs /overlay
+        ubidetach -d 0 -f
+        ubiformat /dev/mtd15 -y -f /tmp/ubi-JIKEAP_N3000.img
+6、执行完成直接断电重启 也就几秒钟。
+
+openwrt 备份MAC
+在OpenWrt系统中，备份MAC地址通常需要结合具体的硬件和存储位置进行操作，以下是一般情况下的方法：
+
+1. 确定MAC地址存储位置
+
+OpenWrt系统的MAC地址通常存储在设备的固件分区或特定的配置文件中。常见的存储位置包括：
+factory分区：部分路由器的MAC地址会存储在factory分区中，该分区通常用于存储硬件相关的配置数据。
+网络接口配置文件：MAC地址也可能在/etc/config/network文件中定义，可通过查看该文件确认。
+2. 备份方法
+
+通过Luci界面备份（推荐）：
+
+登录OpenWrt的Web界面（通常通过浏览器访问路由器的IP地址，如192.168.1.1）。
+进入“系统”→“备份/升级”页面。
+点击“生成备份”按钮，系统会生成一个包含当前配置（包括MAC地址相关配置）的备份文件，并自动下载到本地计算机。
+保存备份文件到安全的位置，以便后续恢复使用。
+通过命令行备份：
+
+通过SSH连接到OpenWrt设备。
+若MAC地址存储在factory分区，可使用以下命令备份该分区：
+bash
+dd if=/dev/mtdblockX of=/tmp/factory_backup.bin
+（其中X为factory分区对应的mtd块设备编号，可通过cat /proc/mtd命令查看分区信息）
+若MAC地址在/etc/config/network文件中，可直接复制该文件：
+bash
+cp /etc/config/network /tmp/network_backup.conf
+将备份文件从设备复制到本地计算机（例如使用scp命令）。
+注意事项：
+
+备份操作前建议先了解设备的具体硬件架构和分区布局，避免误操作导致数据丢失。
+若设备进行了自定义配置或安装了第三方插件，建议同时备份相关配置文件，以确保恢复时系统功能完整。
+恢复MAC地址时，需确保操作环境安全，避免因错误恢复导致网络配置异常。
+
+
+在这之后我还进行了一堆乱七八糟的尝试操做，因为一开始以为没有5g wifi，如果同批次的正常流程走完还是没有5g wifi，联系我，我把后续折腾步骤发出来。
+
+
+
