@@ -97,6 +97,8 @@ converge(){
   #   转 0 后由 ACS 自动选道；后面的 `[ $channel -eq 36 ]` 不会崩。
   #   HE160 仍由 `11axa + HT160` → qcawifi.sh:2578 转 11AHE160，与自动选道不冲突。
   uci -q set "wireless.$d.hwmode=11axa"
+  # ★ r29.11：WDS 回程固定在 5.8G 160MHz（HT160 = QSDK HE160 别名，已实机验证）。
+  #   2.4G 不参与 WDS 桥接，其 20/40 共存由 vs010-mode / apply-config 单独下发。
   uci -q set "wireless.$d.htmode=HT160"
   uci -q set "wireless.$d.channel=$WDS_CH"
   uci -q set "wireless.$d.disabled=0"

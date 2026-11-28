@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>AP 控制台 · Nwrt 普通 AP</title>
+<title>AP 控制台 · WDS/AP（仿UBNT）</title>
 <style>
 :root{--bg:#0a1120;--card:#132033;--card2:#16283f;--line:#263a55;--txt:#e8eef7;--dim:#8fa3bd;--ok:#3ddc97;--warn:#ffc46b;--bad:#ff7b7b;--accent:#6ea8fe}
 *{box-sizing:border-box}
@@ -129,7 +129,13 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
   background:rgba(74,222,128,.14);color:#86efac;border:1px solid rgba(74,222,128,.30)}
 .vsf .nav{padding:8px 14px !important}
 .vsf .nav a{padding:6px 15px !important}
+  .gaClock,.gaUptime{display:inline-block !important;margin-left:8px !important;padding:4px 13px !important;
+    border-radius:999px !important;font-size:12px;font-weight:700;letter-spacing:.2px;
+    background:rgba(96,165,250,.14);color:#93c5fd;border:1px solid rgba(96,165,250,.32);white-space:nowrap}
+  .gaUptime{background:rgba(74,222,128,.12);color:#86efac;border-color:rgba(74,222,128,.30)}
 </style>
+  <link rel="stylesheet" href="../vs010-ubnt.css">
+  <script src="../vs010-ubnt-skin.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -155,6 +161,8 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
       <span>系统仪表盘 · GAUGE</span>
       <span class="gaBadge" id="gaBadge">读取中</span>
       <em>CPU 使用率按两次 /proc/stat 采样实算 · 内存剩余取 MemAvailable · 页面 10 秒自动刷新</em>
+      <span class="gaClock" id="gaClock">时间 —</span>
+      <span class="gaUptime" id="gaUptime">运行 —</span>
     </div>
     <div class="gaRow">
       <div class="gaItem">
@@ -204,7 +212,7 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
   </div>
 <h2>常用设置控制台 · SETUP（需登录；模式 / WDS / AP 无线 / 射频 / 网络 / 维护 全在这）</h2>
 <div class="card" id="vs010-setup" data-mode="ap" style="padding:14px"><div class="empty">读取中…</div></div>
-<div class="cmd" style="color:#b91c1c;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端（本机 WDS 与 AP 均已关闭），内网只允许上级一台 DHCP</div>
+<div class="cmd" style="color:#ff7b7b;text-decoration:underline;font-weight:700">🔴 WDS 网桥主 / 客户端两端硬禁止 DHCP 服务端；AP 模式可在「⑥ DHCP 服务」开启，内网始终只允许一台 DHCP</div>
 
 <h2>网络与本机 · NETWORK</h2>
 <div class="grid" id="netgrid"></div>
@@ -558,6 +566,9 @@ function apply(j){
   $('model').textContent=esc(j.model);$('admin_ip').textContent=esc(j.admin_ip);$('how_ip').textContent=esc(j.admin_ip);
   var fb=document.getElementById('fwBuild'); if(fb) fb.textContent=esc(j.build||'unknown');
   $('up').textContent=esc(j.uptime);$('clock').textContent=esc(j.time);
+  var gc=$('gaClock'), gu=$('gaUptime');
+  if(gc) gc.textContent='时间 '+esc(j.time||'—');
+  if(gu) gu.textContent='运行 '+esc(j.uptime||'—');
   drawRadios(j.radios);drawClients(j.radios,j);drawGuard(j.guard);drawNet(j);drawBdf(j.bdf);drawSys(j.sys);drawGauge(j.sys);drawAccel(j.accel);
   $('err').style.display='none';
 }

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="color-scheme" content="dark">
-<title>网桥状态 · Bridge Status</title>
+<title>网桥状态 · WDS/AP（仿UBNT）</title>
 <style>
 :root{
   --bg:#0e1520; --card:#182333; --card2:#1d2b3e; --line:#2b3d55;
@@ -172,7 +172,13 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
   background:rgba(74,222,128,.14);color:#86efac;border:1px solid rgba(74,222,128,.30)}
 .vsf .nav{padding:8px 14px !important}
 .vsf .nav a{padding:6px 15px !important}
+  .gaClock,.gaUptime{display:inline-block !important;margin-left:8px !important;padding:4px 13px !important;
+    border-radius:999px !important;font-size:12px;font-weight:700;letter-spacing:.2px;
+    background:rgba(96,165,250,.14);color:#93c5fd;border:1px solid rgba(96,165,250,.32);white-space:nowrap}
+  .gaUptime{background:rgba(74,222,128,.12);color:#86efac;border-color:rgba(74,222,128,.30)}
 </style>
+  <link rel="stylesheet" href="../vs010-ubnt.css">
+  <script src="../vs010-ubnt-skin.js"></script>
 </head>
 <body>
 <div class="wrap">
@@ -202,6 +208,8 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
       <span>系统仪表盘 · GAUGE</span>
       <span class="gaBadge" id="gaBadge">读取中</span>
       <em>CPU 使用率按两次 /proc/stat 采样实算 · 内存剩余取 MemAvailable · 页面 10 秒自动刷新</em>
+      <span class="gaClock" id="gaClock">时间 —</span>
+      <span class="gaUptime" id="gaUptime">运行 —</span>
     </div>
     <div class="gaRow">
       <div class="gaItem">
@@ -251,7 +259,7 @@ a.btn,button.btn,.btn,.advBtn,.err,.how,.gaTempLine,.hint,
   </div>
 <h2>常用设置控制台 · SETUP（需登录；模式 / WDS / AP 无线 / 射频 / 网络 / 维护 全在这）</h2>
 <div class="card" id="vs010-setup" data-mode="wds" style="padding:14px"><div class="empty">读取中…</div></div>
-<div class="cmd" style="color:#b91c1c;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端（本机 WDS 与 AP 均已关闭），内网只允许上级一台 DHCP</div>
+<div class="cmd" style="color:#ff7b7b;text-decoration:underline;font-weight:700">🔴 WDS 网桥主 / 客户端两端硬禁止 DHCP 服务端；AP 模式可在「⑥ DHCP 服务」开启，内网始终只允许一台 DHCP</div>
 
 <h2>网络与本机 · NETWORK</h2>
   <div class="grid" id="netgrid"></div>
@@ -405,7 +413,7 @@ function drawNet(j){
       '<span>本机 DHCP</span><span><b>关闭（wds/ap 默认）</b></span><span>上级网关</span><span>'+esc2(j.gateway||'—')+'</span>'+
       '<span>DNS</span><span>'+esc2(j.dns||'—')+'</span><span>IPv6</span><span>全关</span>'+
       '<span>防火墙</span><span>已彻底关闭</span><span>机器狗</span><span>停用，不会循环重启</span></div>'+
-      '<div style="margin-top:8px;color:#f87171;text-decoration:underline;font-weight:700">🔴 WDS 主 / 客户端两端都绝不能开 DHCP 服务端，内网只允许上级一台发地址</div></div>'+
+      '<div style="margin-top:8px;color:#f87171;text-decoration:underline;font-weight:700">🔴 WDS 网桥两端硬禁止 DHCP 服务端；AP 模式可在「⑥ DHCP 服务」按需开启，内网始终只允许一台 DHCP</div></div>'+
     '<div class="card"><div class="ct"><span class="cn">固件</span><span class="dot up">'+esc2(j.mode||'wds')+'</span></div><div class="kv">'+
       '<span>基线</span><span>Linux 5.4.213 / QSDK 闭源栈</span><span>主机名</span><span>'+esc2(j.host)+'</span>'+
       '<span>板级</span><span>'+esc2(j.board||j.model)+'</span><span>无线信道</span><span>自动（ACS）</span>'+
@@ -580,6 +588,9 @@ function render(j){
   txt('host', j.host); txt('model', j.model); txt('ip', j.admin_ip);
   txt('uptime', j.uptime);
   txt('time', j.time + (j.time_synced?'':'（未校时）'));
+  var gc=$('gaClock'), gu=$('gaUptime');
+  if(gc) gc.textContent='时间 '+(j.time||'—')+(j.time_synced?'':'（未校时）');
+  if(gu) gu.textContent='运行 '+(j.uptime||'—');
   $('luci').href = '/cgi-bin/luci/';
   drawNet(j);   /* 第 16 次：网桥页也有网络设置，不依赖共用端点 */
 

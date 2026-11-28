@@ -12,6 +12,7 @@ if [ "$D" = cucc_vs010 ]; then
   echo "[diy-p1] 🔴 VS010：注入实机 GPIO/LED/bootargs DTS + Device + board.d + 板级 BDF"
   echo "[diy-p1]    BDF body 来自本机 0:ART（r24 备份实证），头沿用 kkstone 84B"
   python3 "$W/target/inject-vs010.py" "$W"
+  sh "$W/tools/preflight-vs010.sh" "$W"
 else
   echo "[diy-p1] 3000Q 用源码树原生 Device/cmcc_rax3000q，无需注入"
 fi

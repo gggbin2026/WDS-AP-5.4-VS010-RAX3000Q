@@ -16,7 +16,13 @@ apply_radio(){
   C5=$(cfg_get ch5g);       [ -n "$C5" ]  || C5=auto
   C2=$(cfg_get ch24g);      [ -n "$C2" ]  || C2=auto
   # HT160 是 QSDK qcawifi.sh 的 HE160 别名（vs010-wds-pair 同款，已验证），勿改 HE160
+  # ★ r29.11：5.8G 默认 HT160 = 160MHz 满速；HT160 是 QSDK qcawifi.sh 的 HE160
+  #   别名（vs010-wds-pair 同款，已验证），勿改 HE160
   HT=$(cfg_get htmode);     [ -n "$HT" ]  || HT=HT160
+  # 2.4G 默认 HT40 = QSDK 的 20/40MHz 共存（20MHz 客户端照样能关联）；HT20 = 强制仅 20MHz
+  HT2=$(cfg_get ht24);      [ -n "$HT2" ] || HT2=HT40
+  # 2.4G 默认 HT40 = QSDK 的 20/40MHz 共存（20MHz 客户端照样能关联）；HT20 = 强制仅 20MHz
+  HT2=$(cfg_get ht24);      [ -n "$HT2" ] || HT2=HT40
   TX=$(cfg_get txpower);    [ -n "$TX" ]  || TX=auto
   WEAK=$(cat /etc/vs010/weak.rssi 2>/dev/null || echo -70)
   TOUT=$(cat /etc/vs010/weak.timeout 2>/dev/null || echo 10)
@@ -33,6 +39,9 @@ apply_radio(){
                     *) log "跳过非法 htmode=$HT（保留编译期默认）" ;; esac
     else
       uci -q set "wireless.$x.channel=$C2"
+      # ★ r29.12：2.4G 单独写 20/40 共存；旧配置残留 HT160/HE160 一律跳过，绝不写非法值
+      case "$HT2" in HT40|HT20) uci -q set "wireless.$x.htmode=$HT2" ;;
+                    *) log "跳过非法 ht24=$HT2（保留编译期默认）" ;; esac
     fi
     [ "$TX" = auto ] || uci -q set "wireless.$x.txpower=$TX"
   done
@@ -46,7 +55,7 @@ apply_radio(){
     uci -q set "wireless.$sec.db_timeout=$TOUT"
   done
   uci -q commit wireless 2>/dev/null || true
-  log "r27 射频联动：5G=$C5 / 2.4G=$C2 / htmode=$HT / txpower=$TX / wmm=$WMM / mu=$MU / weak=$WEAK/$TOUT"
+  log "r27 射频联动：5G=$C5 / 2.4G=$C2 / htmode(5.8G)=$HT / ht24(2.4G)=$HT2 / txpower=$TX / wmm=$WMM / mu=$MU / weak=$WEAK/$TOUT"
 }
 apply_channels(){ apply_radio; }   # 兼容 r26 称呼
 uci(){ command uci "$@" 2>/dev/null; }   # 缺 uci 时静默，不刷屏
@@ -114,6 +123,29 @@ kill_ipv6(){
 # ★★ 第 15 次：本机 DHCP 服务端全关（网桥主/客户端/AP 都不发地址）★★
 #   🔴 两端都开 DHCP 会让内网分到不同网段/冲突地址，整网乱掉。
 kill_dhcp(){
+  # ★ r29.7：AP 界面可开本机 DHCP 服务端（地址池 / 租期），WDS 网桥模式硬禁止。
+  #   开关来自 /etc/vs010/user.cfg，每次开机 scrub() 都会重读，重启不丢。
+  MODE_D=$(cat "$D/mode" 2>/dev/null || cat /etc/firmware_mode 2>/dev/null || echo wds)
+  DE=$(cfg_get dhcp_enabled)
+  if [ "$MODE_D" = ap ] && [ "$DE" = 1 ]; then
+    DS=$(cfg_get dhcp_start);     [ -n "$DS" ] || DS=172.10.10.50
+    DL=$(cfg_get dhcp_limit);     [ -n "$DL" ] || DL=200
+    DT=$(cfg_get dhcp_leasetime); [ -n "$DT" ] || DT=12h
+    uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+    uci -q set dhcp.lan.ignore='0'
+    uci -q set dhcp.lan.start="$DS"
+    uci -q set dhcp.lan.limit="$DL"
+    uci -q set dhcp.lan.leasetime="$DT"
+    uci -q set dhcp.lan.dhcpv6='off'; uci -q set dhcp.lan.ra='off'; uci -q set dhcp.lan.ndp='off'
+    uci -q delete dhcp.wan6 2>/dev/null || true
+    uci -q commit dhcp 2>/dev/null || true
+    /etc/init.d/dnsmasq enable  >/dev/null 2>&1 || true
+    /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true
+    /etc/init.d/odhcpd stop    2>/dev/null || true
+    /etc/init.d/odhcpd disable 2>/dev/null || true
+    log "[DHCP] AP 服务端已启用：池 $DS x$DL，租期 $DT（user.cfg 重读）"
+    return 0
+  fi
   uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
   uci -q set dhcp.lan.ignore='1'
   uci -q set dhcp.lan.dhcpv6='off'
@@ -125,7 +157,7 @@ kill_dhcp(){
   /etc/init.d/dnsmasq disable 2>/dev/null || true
   /etc/init.d/odhcpd  stop    2>/dev/null || true
   /etc/init.d/odhcpd  disable 2>/dev/null || true
-  log '[!!! DHCP !!!] 本机 DHCP 服务端已关闭：WDS 主/客户端、AP 都不发地址；内网只允许上级一台 DHCP，客户端那台也绝不能开'
+  log '[!!! DHCP !!!] 本机 DHCP 服务端已关闭：WDS 主/客户端硬禁止；AP 可在「常用设置 → DHCP 服务」开启，内网只允许一台 DHCP'
 }
 
 # ★★ 第 15 次：防火墙彻底关（服务 + 自启 + 规则）★★
@@ -329,8 +361,8 @@ apply(){
     uci -q set network.globals.ula_prefix='' 2>/dev/null || true
     setv network.lan ipv6 0             # ★ 关 IPv6（网口/路由都不起 v6）
     if [ "$MODE" = ap ]; then
-      # AP：本机不做 DHCP 服务端，交给上级
-      uci -q set dhcp.lan.ignore=1 2>/dev/null || true
+      # r29.7：仅当 user.cfg 明确开启 AP DHCP 时才不 ignore；默认交上级
+      [ "$(cfg_get dhcp_enabled)" = 1 ] || uci -q set dhcp.lan.ignore=1 2>/dev/null || true
     fi
   else
     log "network.lan 未生成，后台补跑一次"

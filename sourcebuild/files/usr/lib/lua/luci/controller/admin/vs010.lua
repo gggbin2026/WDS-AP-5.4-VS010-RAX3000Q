@@ -14,6 +14,10 @@ local function cur_mode()
 end
 
 function index()
+    -- ★ r29.2：LuCI 左侧一级菜单「← 返回网桥/AP 状态」。
+    --   与 LuCI 自带 logout 一样是一级 leaf 节点，从后台任意页面一点就回独立状态页；
+    --   redirect 按 /etc/vs010/mode 当前模式走（界面里切过 AP/WDS 也跟得上）。
+    entry({"admin", "vs010_home"}, call("go_home"), _("← 返回网桥/AP 状态"), 1)
     local m = cur_mode()
     if m == "wds" then
         entry({"admin", "status", "vs010_bridge"}, call("show_bridge"), _("网桥状态"), 55)
@@ -25,6 +29,14 @@ function index()
     -- r26：「常用设置」节点由 vs010_setup.lua 自己注册（同一个 path 不能重复 entry），
     --       同在 admin 树下继承 sysauth，未登录自动跳登录页；菜单顺序 59。
 end
+
+  -- r29.2：按当前模式 302 回独立状态页（/bridge/ 与 /ap/ 本身公开只读，不需登录）
+  function go_home()
+      local http = require "luci.http"
+      local m = cur_mode()
+      http.redirect((m == "ap") and "/ap/" or "/bridge/")
+      return
+  end
 
 -- 第 17 次：主题切换 + WDS 主/客户端开关（GET 参数严格白名单，杜绝命令注入）
 function show_role()

@@ -9,10 +9,11 @@ define Device/cucc_vs010
   PAGESIZE := 2048
   DEVICE_DTS_CONFIG := config@mp02.1
   IMAGES := nand-factory.ubi
-  # 🔴 第 22 次：VS010 板级 BDF（board-2.bin）+ 双频段 Q6/m3 固件。
-  #    BDF 容器用 qmi-board-id=36/96（沿用 kkstone 已验证路径），
-  #    board data 换成从 VS010 0:ART 提取的真实校准（whmzsu oem_extract）。
-  DEVICE_PACKAGES := ATH11K_MEM_PROFILE_256M \
+  # 🔴 r29.6：DEVICE_PACKAGES 里绝不写内存档符号（它不是包名）。
+  #   256M 内存档由 .config 的对应符号驱动，
+  #   image/Makefile 的 DTS_CPPFLAGS 条件语句自动加宏，
+  #   写进包列表只会引入一个不存在的包依赖（3000Q 定义里没有，故 3000Q 编译成功）。
+  DEVICE_PACKAGES := \
 	ath11k-firmware-ipq5018 \
 	ath11k-firmware-qcn6122 \
 	ipq-wifi-cucc_vs010

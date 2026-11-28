@@ -53,6 +53,8 @@ function index()
     entry({"admin", "status", "vs010_setup", "probe"}, call("probe"))
     entry({"admin", "status", "vs010_setup", "save"}, call("save"))
     entry({"admin", "status", "vs010_setup", "act"},  call("act"))
+      -- r29.11：WDS 客户端「搜索周边主端」只读扫描，继承 admin 树 sysauth
+      entry({"admin", "status", "vs010_setup", "scan"}, call("scan"))
 end
 
 function show()
@@ -113,6 +115,20 @@ local function jesc(v)
     s = s:gsub("\r", " "):gsub("\n", " "):gsub("\t", " ")
     return s
 end
+
+  -- ★ r29.11：只读扫描。零用户参数（接口由 /usr/sbin/vs010-scan 自己探测），
+  --   不写 UCI、不 reload、不重启；未登录 403。输出直接透传，绝不伪造 SSID。
+  function scan()
+      local http = require "luci.http"
+      if not authed() then
+          http.status(403, "Forbidden")
+          json('{"ok":0,"msg":"🔒 未登录，扫描已锁定"}')
+          return
+      end
+      local sys = require "luci.sys"
+      local out = sys.exec("/usr/sbin/vs010-scan 2>/dev/null")
+      json((out ~= "" and out) or '{"ok":0,"msg":"扫描未返回，请查看 logread"}')
+  end
 
 function act()
     local http = require "luci.http"

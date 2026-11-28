@@ -34,10 +34,16 @@ usr/sbin/vs010-tick
 usr/sbin/vs010-wds-pair
 usr/sbin/vs010-wifi-check
 usr/sbin/wifi-check
+usr/sbin/vs010-scan
 www/ap/index.html
 www/vs010-setup.js
 www/index.html
+etc/banner
+etc/vs010/product
 www/bridge/index.html
+www/ubnt/index.html
+www/vs010-ubnt-skin.js
+www/vs010-ubnt.css
 www/cgi-bin/apstatus
 www/cgi-bin/bridge
 www/cgi-bin/vs010

@@ -1,5 +1,26 @@
 <%+header%>
 <h2 name="content">主题与 WDS 角色</h2>
+<style>
+.vs010Back{display:inline-flex;align-items:center;gap:6px;padding:8px 16px;border-radius:999px;
+ background:linear-gradient(90deg,#1677d2,#7a5cf0);color:#fff;text-decoration:none;
+ font-size:13px;font-weight:700;box-shadow:0 2px 8px rgba(20,60,120,.22);margin:2px 8px 10px 0}
+.vs010Back:hover{filter:brightness(1.12)}
+.vs010Back.ghost{background:#eaf1fa;color:#15518f;box-shadow:none}
+  .vs010Nav{display:flex;flex-wrap:wrap;gap:7px;margin:2px 0 12px}
+  .vs010Nav a{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:999px;
+   background:#eaf1fa;color:#15518f;text-decoration:none;font-size:12px;font-weight:700;white-space:nowrap}
+  .vs010Nav a:hover{background:#1677d2;color:#fff}
+  .vs010Nav a.ghost{background:#eef7f0;color:#166534}
+</style>
+<div class="vs010Nav">
+  <a href="/ubnt/">◧ UBNT 概览</a>
+  <a href="/bridge/">⇄ 网桥状态</a>
+  <a href="/ap/">≋ AP 状态</a>
+  <a href="/cgi-bin/luci/admin/status/vs010_setup">⚙ 常用设置</a>
+  <a href="/cgi-bin/luci/">↗ OpenWrt / LuCI</a>
+  <a class="ghost" href="/cgi-bin/luci/admin/logout">🔑 已登录 · 退出</a>
+</div>
+<% if mode == "wds" then %><a class="vs010Back" href="/bridge/">← 返回网桥状态页</a><% else %><a class="vs010Back" href="/ap/">← 返回 AP 状态页</a><% end %>
 <div class="cbi-section-descr">两种机型（VS010 / RAX3000Q）、两种模式（WDS / AP）通用。切换后按提示用新地址重新打开页面。</div>
 
 <% if out and out ~= "" then %>
@@ -25,18 +46,16 @@
 
 <div class="cbi-section"><h3>Argon 主题</h3>
 <div class="cbi-section-descr">
-  默认仍是官方 <b>1.7.2</b>；<b>v2.4.3</b> 是上游最后一个 Lua 架构兼容版，已作为独立目录注入、零覆盖官方文件。切换不重启、不动网络与无线，随时可切回。
+  源码编译线在<b>编译期</b>就固定为 <b>Argon v2.4.3</b>（上游最后一个 Lua 架构兼容版），
+  不提供运行时切换命令；如需换主题请改 <code>.config</code> 后重编。
+  「系统 → 语言与界面 → 设计」里可见当前主题。
 </div>
-<div style="display:flex;gap:10px;flex-wrap:wrap;margin:10px 0">
-  
-  
 </div>
-<div class="cbi-section-descr">也可在「系统 → 语言与界面 → 设计」里选 <code>Argon_243</code>；命令行 <code>vs010-theme status|argon243|argon</code>。</div>
 </div>
 
 <div class="cbi-section-descr">
 <% if mode == "wds" then %><a href="/cgi-bin/luci/admin/status/vs010_bridge">网桥状态</a><% else %><a href="/cgi-bin/luci/admin/status/vs010_ap">AP 状态</a><% end %>
- ｜ <a href="/cgi-bin/luci/admin/status/vs010_ports">网口速率</a>
+ ｜ <a href="/cgi-bin/luci/admin/status/vs010_ports">网口状态</a>
  ｜ <a href="/cgi-bin/luci/admin/status/vs010_console">状态控制台</a>
 </div>
 <%+footer%>

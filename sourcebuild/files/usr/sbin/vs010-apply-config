@@ -49,12 +49,12 @@ get_json(){
   printf '{"ok":1,"mode":"%s","role":"%s","ip":"%s",' "$(jesc "$MODE")" "$(jesc "$ROLE")" "$(jesc "$ip")"
   for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
            wds_ssid wds_key peer_ssid peer_key peer_bssid \
-           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
-           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme; do
+           ch5g ch24g htmode ht24 txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme dhcp_enabled dhcp_start dhcp_limit dhcp_leasetime; do
     printf '"%s":"%s",' "$k" "$(jesc "$(cfg_get "$k")")"
   done
   APDEF=VS010-AP; case "$(cat /etc/firmware_model 2>/dev/null)" in *rax3000q*|*cmcc*) APDEF=RAX3000Q-AP ;; esac
-  printf '"defaults":{"ap_ssid":"%s","ap_key":"AP123456","wds_ssid":"WDS-Bridge-Z","wds_key":"WDS123456","ch5g":"auto","ch24g":"auto","htmode":"HT160","txpower":"auto","wmm":"1","mumimo":"1","weak_rssi":"-70","weak_timeout":"10","mgmt_ip":"%s","mgmt_mask":"255.255.252.0","stp":"1","ntp_interval":"300","theme":"argon"},' "$APDEF" "$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)"
+  printf '"defaults":{"ap_ssid":"%s","ap_key":"AP123456","wds_ssid":"WDS-Bridge-Z","wds_key":"WDS123456","ch5g":"auto","ch24g":"auto","htmode":"HT160","ht24":"HT40","txpower":"auto","wmm":"1","mumimo":"1","weak_rssi":"-70","weak_timeout":"10","mgmt_ip":"%s","mgmt_mask":"255.255.252.0","stp":"1","ntp_interval":"300","theme":"argon","dhcp_enabled":"0","dhcp_start":"172.10.10.50","dhcp_limit":"200","dhcp_leasetime":"12h"},' "$APDEF" "$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)"
   printf '"auth":"luci-admin-sysauth","note":"配置经 LuCI 会话鉴权；WPA 明文存 UCI（驱动需要），重启从 user.cfg 联动重建"}\n'
 }
 
@@ -63,8 +63,8 @@ apply_cfg(){
   [ -s "$IN" ] || { printf '{"ok":0,"msg":"缺字段文件"}\n'; exit 1; }
   for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
            wds_ssid wds_key peer_ssid peer_key peer_bssid \
-           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
-           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme role mode; do
+           ch5g ch24g htmode ht24 txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme dhcp_enabled dhcp_start dhcp_limit dhcp_leasetime role mode; do
     eval "V_$k=''"
   done
   while IFS= read -r line || [ -n "$line" ]; do
@@ -72,8 +72,8 @@ apply_cfg(){
     k=${line%%=*}; v=${line#*=}
     case "$k" in
       ap_ssid|ap_key|ap2_ssid|ap2_key|ap5_ssid|ap5_key|wds_ssid|wds_key|peer_ssid|peer_key|peer_bssid|\
-      ch5g|ch24g|htmode|txpower|wmm|mumimo|weak_rssi|weak_timeout|\
-      mgmt_ip|mgmt_mask|hostname|stp|ntp_server|ntp_interval|theme|role|mode) ;;
+      ch5g|ch24g|htmode|ht24|txpower|wmm|mumimo|weak_rssi|weak_timeout|\
+      mgmt_ip|mgmt_mask|hostname|stp|ntp_server|ntp_interval|theme|dhcp_enabled|dhcp_start|dhcp_limit|dhcp_leasetime|role|mode) ;;
       *) continue ;;
     esac
     safe "$v" || { printf '{"ok":0,"msg":"字段 %s 含非法字符"}\n' "$k"; exit 1; }
@@ -101,7 +101,12 @@ apply_cfg(){
                   case "$k" in ap2_key) V_ap2_key=$v ;; *) V_ap5_key=$v ;; esac ;;
       # ★ r28：只放行该源码线已验证的 QSDK qcawifi.sh 约定值。HE160/HE80/VHT80
       #   是 mac80211 标准写法，但本线用 11axa + HT160 表示 HE160；写 HE160 会挂 5G。
-      htmode)     case "$v" in ''|HT160|HT80|HT40) V_htmode=$v ;; *) printf '{"ok":0,"msg":"频宽只支持 HT160/HT80/HT40（QSDK 约定；HE160 请用 HT160）"}\n'; exit 1 ;; esac ;;
+      # ★ r28→r29.11：htmode 只管 5.8G。HT160 是 QSDK qcawifi.sh 的 HE160 别名
+      #   （vs010-wds-pair 同款，已验证）；写 HE160 会让 5G 起不来。默认 HT160=160MHz 满速。
+      htmode)     case "$v" in ''|HT160|HT80|HT40) V_htmode=$v ;; *) printf '{"ok":0,"msg":"5.8G 频宽只支持 HT160/HT80/HT40（QSDK 约定；HE160 请用 HT160，HT20 请用 2.4G 的 ht24 字段）"}\n'; exit 1 ;; esac ;;
+      # ★ r29.11：ht24 只管 2.4G。HT40 = QSDK 的 20/40MHz 共存（20MHz 客户端照样能关联），
+      #   HT20 = 强制仅 20MHz。2.4G 绝不接受 HT160/HT80（写了 radio 起不来）。
+      ht24)       case "$v" in ''|HT40|HT20) V_ht24=$v ;; *) printf '{"ok":0,"msg":"2.4G 频宽只支持 HT40（20/40 共存）/HT20（仅 20MHz），不支持 80/160MHz"}\n'; exit 1 ;; esac ;;
       txpower)    [ -z "$v" ] || [ "$v" = auto ] || num_ok "$v" 1 30 || { printf '{"ok":0,"msg":"发射功率须 auto 或 1–30 dBm"}\n'; exit 1; }; V_txpower=$v ;;
       wmm|mumimo|stp) case "$v" in ''|0|1) ;; *) printf '{"ok":0,"msg":"%s 只能是 0/1"}\n' "$k"; exit 1 ;; esac
                   case "$k" in wmm) V_wmm=$v ;; mumimo) V_mumimo=$v ;; *) V_stp=$v ;; esac ;;
@@ -112,6 +117,14 @@ apply_cfg(){
       ntp_server) len_ok "$v" 128 0 || { printf '{"ok":0,"msg":"NTP 服务器过长"}\n'; exit 1; }; V_ntp_server=$v ;;
       ntp_interval) [ -z "$v" ] || num_ok "$v" 60 3600 || { printf '{"ok":0,"msg":"NTP 间隔须 60–3600 秒"}\n'; exit 1; }; V_ntp_interval=$v ;;
       theme)      case "$v" in ''|argon|argon243) V_theme=$v ;; *) printf '{"ok":0,"msg":"主题只能是 argon / argon243"}\n'; exit 1 ;; esac ;;
+        dhcp_enabled) case "$v" in ''|0|1) V_dhcp_enabled=$v ;; *) printf '{"ok":0,"msg":"DHCP 开关只能是 0/1"}\n'; exit 1 ;; esac ;;
+        dhcp_start)   [ -z "$v" ] || printf '%s' "$v" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || { printf '{"ok":0,"msg":"地址池起始 IP 格式不对"}\n'; exit 1; }; V_dhcp_start=$v ;;
+        dhcp_limit)   [ -z "$v" ] || num_ok "$v" 1 253 || { printf '{"ok":0,"msg":"地址池数量须 1–253"}\n'; exit 1; }; V_dhcp_limit=$v ;;
+        dhcp_leasetime) if [ -n "$v" ]; then
+            case "$v" in
+              1m|5m|10m|30m|1h|2h|6h|12h|24h|infinite) ;;
+              *) num_ok "$v" 60 604800 || { printf '{"ok":0,"msg":"租期须 1m…24h 或 60–604800 秒"}\n'; exit 1; } ;;
+            esac; fi; V_dhcp_leasetime=$v ;;
     esac
   done < "$IN"
   rm -f "$IN" 2>/dev/null || true
@@ -122,8 +135,8 @@ apply_cfg(){
   chmod 600 "$T" 2>/dev/null || true
   for k in ap_ssid ap_key ap2_ssid ap2_key ap5_ssid ap5_key \
            wds_ssid wds_key peer_ssid peer_key peer_bssid \
-           ch5g ch24g htmode txpower wmm mumimo weak_rssi weak_timeout \
-           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme; do
+           ch5g ch24g htmode ht24 txpower wmm mumimo weak_rssi weak_timeout \
+           mgmt_ip mgmt_mask hostname stp ntp_server ntp_interval theme dhcp_enabled dhcp_start dhcp_limit dhcp_leasetime; do
     eval "v=\$V_$k"
     [ -z "$v" ] && v=$(cfg_get "$k")   # ★ 空值 = 保持原值，避免只改一项时把其它清空
     printf '%s=%s\n' "$k" "$v" >> "$T"
@@ -132,7 +145,7 @@ apply_cfg(){
   # 弱信号两份存量脚本读的文件，同步写（不在 user.cfg 里重复存）
   [ -n "$V_weak_rssi" ]    && printf '%s\n' "$V_weak_rssi"    > "$D/weak.rssi" 2>/dev/null || true
   [ -n "$V_weak_timeout" ] && printf '%s\n' "$V_weak_timeout" > "$D/weak.timeout" 2>/dev/null || true
-  log "user.cfg 已更新（mode=$MODE role=$ROLE ch5g=$V_ch5g ch24g=$V_ch24g weak=$V_weak_rssi/$V_weak_timeout）"
+  log "user.cfg 已更新（mode=$MODE role=$ROLE ch5g=$V_ch5g ch24g=$V_ch24g htmode=$V_htmode ht24=$V_ht24 weak=$V_weak_rssi/$V_weak_timeout）"
 
   MODE_SWITCHED=0
   # ── ② 工作模式切换：写 overlay 的 mode + 清 stamp + 重跑首启配置（不重启机器）──
@@ -195,12 +208,17 @@ apply_cfg(){
     # ★ 信道内联应用（不重跑整个 vs010-mode，避免 rc.common 二次分派）
     C5=$(cfg_get ch5g); [ -n "$C5" ] || C5=auto
     C2=$(cfg_get ch24g); [ -n "$C2" ] || C2=auto
+    # ★ r29.11：5.8G 默认 160MHz（HT160）；2.4G 默认 HT40 = 20/40MHz 共存
+    H5=$(cfg_get htmode); [ -n "$H5" ] || H5=HT160
+    H2=$(cfg_get ht24);   [ -n "$H2" ] || H2=HT40
     for x in $(uci show wireless 2>/dev/null \
               | sed -n 's/^wireless\.\([^.=]*\)=wifi-device$/\1/p'); do
       hw=$(uci -q get "wireless.$x.hwmode" 2>/dev/null | tr 'A-Z' 'a-z')
       case "$hw" in
-        *axa*|*ac*|*a) uci -q set "wireless.$x.channel=$C5" ;;
-        *)              uci -q set "wireless.$x.channel=$C2" ;;
+        *axa*|*ac*|*a) uci -q set "wireless.$x.channel=$C5"
+                          case "$H5" in HT160|HT80|HT40) uci -q set "wireless.$x.htmode=$H5" ;; esac ;;
+        *)              uci -q set "wireless.$x.channel=$C2"
+                          case "$H2" in HT40|HT20) uci -q set "wireless.$x.htmode=$H2" ;; esac ;;
       esac
     done
     uci -q commit wireless 2>/dev/null || true
@@ -233,6 +251,31 @@ apply_cfg(){
            /var/luci-indexcache /var/luci-modulecache 2>/dev/null || true
     [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd reload >/dev/null 2>&1 || true
   fi
+    # ── ⑤-b r29.7：AP 可选 DHCP 服务端（地址池 / 租期），网桥模式硬禁止 ──
+    DE=$(cfg_get dhcp_enabled)
+    if [ "$MODE" = ap ] && [ "$DE" = 1 ]; then
+      DS=$(cfg_get dhcp_start);     [ -n "$DS" ] || DS=172.10.10.50
+      DL=$(cfg_get dhcp_limit);     [ -n "$DL" ] || DL=200
+      DT=$(cfg_get dhcp_leasetime); [ -n "$DT" ] || DT=12h
+      uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+      uci -q set dhcp.lan.ignore='0'
+      uci -q set dhcp.lan.start="$DS"
+      uci -q set dhcp.lan.limit="$DL"
+      uci -q set dhcp.lan.leasetime="$DT"
+      uci -q set dhcp.lan.dhcpv6='off'; uci -q set dhcp.lan.ra='off'; uci -q set dhcp.lan.ndp='off'
+      uci -q delete dhcp.wan6 2>/dev/null || true
+      uci -q commit dhcp 2>/dev/null || true
+      [ -x /etc/init.d/dnsmasq ] && { /etc/init.d/dnsmasq enable >/dev/null 2>&1 || true
+                                      /etc/init.d/dnsmasq restart >/dev/null 2>&1 || true; }
+      log "AP DHCP 服务端已启用：池 $DS x$DL，租期 $DT"
+    else
+      uci -q get dhcp.lan >/dev/null 2>&1 || uci -q set dhcp.lan=dhcp
+      uci -q set dhcp.lan.ignore='1'; uci -q commit dhcp 2>/dev/null || true
+      [ -x /etc/init.d/dnsmasq ] && { /etc/init.d/dnsmasq stop >/dev/null 2>&1 || true
+                                      /etc/init.d/dnsmasq disable >/dev/null 2>&1 || true; }
+      [ "$MODE" = wds ] && [ "$DE" = 1 ] && log "WDS 网桥模式硬禁止本机 DHCP 服务端，已强制关闭"
+    fi
+
   [ "$NET_CHANGED" = 1 ] && {
     ( sleep 3; /etc/init.d/network reload >/dev/null 2>&1 ) >/dev/null 2>&1 &
   } || true
@@ -241,7 +284,7 @@ apply_cfg(){
   [ "$MODE_SWITCHED" = 1 ] && [ -x /sbin/wifi ] && /sbin/wifi reload >/dev/null 2>&1 || true
 
   ip=$(uci -q get network.lan.ipaddr 2>/dev/null || echo 172.10.10.241)
-  msg='已保存并联动写入后台：user.cfg + wireless + network/system/luci，开机脚本重读，重启不丢失'
+  msg='已保存并联动写入后台：user.cfg + wireless + network/system/luci + dhcp，开机脚本重读，重启不丢失'
   [ "$MODE_SWITCHED" = 1 ] && msg="$msg　🔴 已切到 $MODE 模式：菜单缓存已清、uhttpd 已 reload，2 秒后自动打开对应界面"
   [ "$NET_CHANGED" = 1 ] && msg="$msg　🔴 管理地址已改，3 秒后网络重载，请用新地址重开页面"
   [ "$ROLE_CHANGED" = 1 ] && msg="$msg　🔴 管理地址已切到 $ip，3 秒后网络重载，请改用新地址重新打开"

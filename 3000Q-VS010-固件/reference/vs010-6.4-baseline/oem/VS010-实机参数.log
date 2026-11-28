@@ -1,0 +1,98 @@
+# VS010 实机参数读取日志
+# ============================================================================
+# 采集对象 : VS010（CUCC / ChinaUnicom VS010，IPQ5018 + QCN6122）
+# 采集方式 : uBootKit 闪存备份 + Linux 侧只读命令（dd if=/dev/mtdX、cat /sys/...）
+#           全程只读：未写入分区、未改 U-Boot、未改配置、未重启
+# 原始备份 : reference/backup/VS010-flash-backup-20240414-135754.tar.gz
+#           15 个分区 sha256 与 manifest.txt 15/15 全部匹配
+# 解析工具 : sourcebuild/tools/parse-vs010-backup.py（可复跑，带缓存）
+# 机器可读 : reference/backup/VS010-备份解析.json
+# 二进制   : reference/vs010-oem/（本目录，含 MANIFEST.json）
+#
+# 🔴 结论：以下【全部为实机读取】，不是推断、不是照抄其它机型。
+#          ✅ 可以直接用于 DTS / board.d / 固件编译，已在实际编译线中使用。
+# ============================================================================
+
+[2026-11-27] 环境
+  firmware      : Linux Nwrt 5.4.213 #0 SMP PREEMPT Sun Apr 14 05:49:22 2024 armv7l
+  distrib       : OpenWrt 19.07-SNAPSHOT / R23.4.16 / Nwrt (QSDK 12.2)
+  target        : ipq50xx/ipq50xx_32 / arm_cortex-a7_neon-vfpv4（32 位 ARMv7）
+  console       : ttyMSM0,115200n8（串口 TTL 1.8V）
+  arch          : armv7l / ARMv7 p2v8  → .config 必须 ipq50xx_arm，不能 aarch64
+
+[2026-11-27] GPIO / 按键 / LED —— 来源 /sys/firmware/fdt（vs010.dtb, 45056 B, 311 节点）
+  ✅ 按键     : 只有【一个】wps 键，GPIO 34，KEY_WPS_BUTTON，debounce-interval=60，低有效
+  ✅ 按键极性 : gpios=<phandle 34 1> → GPIO_ACTIVE_LOW；极性只能从设备树取，debugfs 看不到
+  ✅ LED mesh : GPIO 33，低有效（led@35）
+  ✅ LED pwr  : GPIO 31，低有效（led@30）
+  ✅ 无 reset : 实机没有独立 reset 键；不要凭空加 KEY_RESTART（恩山误采样变砖案例）
+  ✅ 已清除   : 3000Q 的 GPIO 23/38(按键)、24/19/17(LED) 全部从 DTS 移除
+  ✅ 可用     : sourcebuild/target/ipq50xx/ipq5000-vs010.dts 已按上述值落地
+
+[2026-11-27] 无线 / BDF —— 来源 0:ART 分区 + 实机 dmesg
+  ✅ dmesg    : Downloading BDF: IPQ5018/bdwlan.b10, size: 131072
+  ✅ dmesg    : Downloading BDF: qcn6122/bdwlan.b60, size: 131072
+  ✅ 2.4G BDF : 0:ART @0x1000, 131072 B → reference/vs010-oem/bdwlan.b10
+  ✅ 5G   BDF : 0:ART @0x26800, 131072 B → reference/vs010-oem/qcn6122_bdwlan.b60
+  ✅ 容器     : board-cucc_vs010.ipq5018 / .qcn6122（84 B 头 + 131072 B body）
+  ✅ 容器头   : QCA-ATH11K-BOARD，qmi-board-id=36(2.4G) / 96(5G)，沿用 kkstone 已验证格式
+  ✅ 校准     : r25 起 body 直接取本机 ART，100% 本机校准（r22 通用版仅 99.20%/97.70% 相似）
+  ✅ 互斥     : .config.vs010 只选 ipq-wifi-cucc_vs010，3000Q 的 BDF 包已关（防 CONFLICTS）
+  ✅ 一致性   : 备份 ART 与仓库 VS010-smem_0-ART.bin 100.00% 一致（本来就是这台机器）
+  ✅ 可用     : 已在源码编译线 diy-part1 → inject-vs010.py → package/firmware/ipq-wifi 落地
+
+[2026-11-27] MIBIB 分区表 —— 来源 0:MIBIB 分区二进制解析（不是推断）
+  ✅ magic    : 0x55ee73aa / 0xe35ebddb，version=4，numparts=16
+  ✅ 单位     : 条目 28 B（name[16] + u32 off + u32 size + u32 attr），off/size 以 0x20000(128KiB) 块计
+  ✅ 16 分区  : SBL1 / MIBIB / BOOTCONFIG / BOOTCONFIG1 / QSEE / QSEE_1 / DEVCFG /
+               DEVCFG_1 / CDT / CDT_1 / APPSBLENV / APPSBL / APPSBL_1 / ART / TRAINING / rootfs
+  ✅ ART      : @0x00780000, 0x00100000 (1 MiB) = mtd13
+  ✅ TRAINING : @0x00880000, 0x00080000 (512 KiB) = mtd14
+  ✅ rootfs   : @0x00900000, 0x06e00000 (110 MiB) = mtd15 → 大分区 U-Boot，实锤
+  ✅ 前 15 项 : 合计 0x00900000 = 9 MiB，与 /proc/mtd mtd0..mtd14 逐项吻合
+  ✅ 更正     : r23 写的「原厂 24 分区」是推断，实机是 16 分区；逐项表见
+               reference/backup/VS010-MIBIB-分区表.md
+  ✅ 可用     : 内核走 qcom,smem-part 从 SMEM 取表，DTS 不写死偏移；刷机只写 rootfs 分区
+
+[2026-11-27] U-Boot / bootargs —— 来源 0:APPSBL(ELF strings) + 0:APPSBLENV
+  ✅ U-Boot   : U-Boot 2016.01-3e89586-godsun (2026-08-14 22:56:00 +0800)
+  ✅ 编译器   : arm-openwrt-linux-gcc (OpenWrt GCC 5.2.0 6404588+r49254) 5.2.0
+  ✅ 能力     : /uboot.html web failsafe、bootipq、U-Boot Telnet Console、failsafe_write_uboot
+  ✅ 单槽     : 0:APPSBL_1 / 0:CDT_1 全 0xFF → 没有第二份 U-Boot 可切，救砖必须 TTL/web
+  ✅ env.bootargs : console=ttyMSM0,115200n8  ← 🔴 只有 console，没有 ubi.mtd / swiotlb
+  ✅ 推论实锤 : 好固件 /proc/cmdline 里的 ubi.mtd=rootfs / swiotlb=1 / coherent_pool=2M
+               只能来自【内核 DTS 的 bootargs-append】，不是 U-Boot 追加
+  ✅ 必须保留 : bootargs-append = " ubi.mtd=rootfs root=/dev/ubiblock0_1 swiotlb=1 coherent_pool=2M"
+               删掉 = UBI 挂不上 rootfs = 开机起不来。verify.sh + workflow 双硬断言
+  ✅ 边界     : 按键采样 / web 恢复在 U-Boot 层；改内核 DTS 的 gpio-keys 不会硬砖，
+               但【U-Boot 本体绝对不要动】
+
+[2026-11-27] CDT —— 来源 0:CDT 分区二进制
+  ✅ magic    : "CDT\0"，version=2，"RDD" 段 @0x24
+  ✅ 内容     : DDR 时序 / 板级参数（一串 4 字节大端值），不是 wifi board-id 表
+  ✅ 无字段   : 前 4 KiB 内没有 wifi board-id 定义（搜过 0x10/0x24/0x60 与 16/36/96）
+  ✅ 裁决     : 原厂 dtb 的 board_id=0x10/0x60 与 ath11k 的 qmi-board-id=36/96
+               是【两套软件栈各自的编号】，CDT 裁决不了；不靠猜改主容器
+  ✅ 备选     : sourcebuild/reference/variants/ 保留 boardid16 容器，需要时实机试
+
+[2026-11-27] switch（网口）—— 来源 vs010.dtb；⚠ 默认不切
+  实机       : switch_cpu_bmp=0x40 / lan_bmp=0x1e / wan_bmp=0x00，8 对 ar8327-initvals，4 个 PHY 口
+  已验证档   : 0x48/0x34/0x02，4 对 initvals，6 个口（3000Q 骨架，实机「网卡都能起来」）
+  ✅ 决策     : ar8327-initvals 是闭源私有寄存器，改错会 ESS 探针超时、网口全灭
+               默认保留已验证档；实机档做成可选开关 vs010_switch_oem（切前 TTL 在手边）
+  ✅ 待实测   : 02_network 的 WAN/LAN 标签映射需 swconfig 实机核对，现有材料定不了，未臆造
+
+[2026-11-27] 无线角色（r25 新增，按用户要求）
+  ✅ 网桥 wds : 只用 5G（HE160 / channel=auto / WDS-Bridge-Z），2.4G radio disabled=1
+  ✅ AP   ap  : 2.4G 作为 AP 用（VS010-AP / RAX3000Q-AP，AP123456），5G 同时作为 AP
+  ✅ 不重建   : 只改现有 wifi-device / wifi-iface 的 option，绝不重建 radio、绝不 wifi down
+
+[2026-11-27] 隐私提醒
+  ⚠ 0-ART.bin / 0-APPSBLENV.bin 含本机 MAC（94:c9:b7:e5:a0:8x）与序列号
+    公开仓库建议脱敏；BDF 取的是 0x1000 / 0x26800 校准段，不含 MAC 字段
+  ⚠ 备份包不含 rootfs / 配置 / 密码 / SSH 密钥
+
+# ============================================================================
+# 以上参数【全部为实机读取】，✅ 可以直接使用。
+# 逐项取证：reference/backup/VS010-实机备份取证.md
+# ============================================================================

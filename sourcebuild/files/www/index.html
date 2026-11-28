@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VS010 · 正在进入状态页…</title>
+<title>WDS/AP（仿UBNT） · 正在进入状态页…</title>
 <style>
 html,body{margin:0;height:100%;background:#0f1724;color:#e8eef8;
   font:14px/1.7 -apple-system,"WenQuanYi Micro Hei",sans-serif;display:flex;
@@ -12,11 +12,26 @@ h1{font-size:19px;margin:0 0 10px}
   box-shadow:0 0 8px #4ade80;margin-right:8px;animation:bl 1.2s infinite}
 @keyframes bl{50%{opacity:.35}}
 a{color:#8ab4ff}
+  .nav{display:flex;flex-wrap:wrap;gap:7px;justify-content:center;margin:20px 0 8px}
+  .nav a{display:inline-flex;align-items:center;padding:7px 14px;border-radius:999px;
+    background:rgba(138,180,255,.14);border:1px solid rgba(138,180,255,.3);color:#cfe0ff;
+    font-size:12px;font-weight:700;text-decoration:none;white-space:nowrap}
+  .nav a:hover{background:rgba(138,180,255,.28);color:#fff}
+  .nav a.login{background:rgba(74,222,128,.13);border-color:rgba(74,222,128,.32);color:#86efac}
+  .authstate{font-size:11px;opacity:.6;margin-bottom:8px}
 small{opacity:.65;display:block;margin-top:14px}
 </style></head><body>
 <div class="box">
   <h1><span class="dot"></span><span id="msg">正在进入设备状态页…</span></h1>
+    <div style="font-size:12px;opacity:.75;margin-top:6px">WDS/AP（仿UBNT）</div>
   <div id="sub">只读状态无需登录；修改配置需登录 LuCI。</div>
+    <div class="nav">
+      <a href="/ubnt/">◧ 概览</a><a href="/bridge/">⇄ 网桥状态</a><a href="/ap/">≋ AP 状态</a>
+      <a href="/cgi-bin/luci/admin/status/vs010_setup">⚙ 常用设置</a>
+      <a href="/cgi-bin/luci/">↗ OpenWrt / LuCI</a>
+      <a class="login" id="authBtn" href="/cgi-bin/luci/">🔑 登录 LuCI</a>
+    </div>
+    <div class="authstate" id="authState">未登录 · 只读</div>
   <small>没有自动跳转？<a href="/bridge/">网桥状态</a> · <a href="/ap/">AP 状态</a> · <a href="/cgi-bin/luci/">高级设置后台</a><br>🔧 OpenWrt / LuCI 后台直达路径：<code>http://&lt;设备IP&gt;/cgi-bin/luci/</code>（默认 <code>http://172.10.10.241/cgi-bin/luci/</code>；不带尾斜杠亦可）。根路径 <code>/</code> 现为状态页跳转，不再直达 LuCI。</small>
 </div>
 <script>
@@ -39,5 +54,15 @@ small{opacity:.65;display:block;margin-top:14px}
       go(m);
     })
     .catch(function(){ if(done)return; done=true; clearTimeout(timer); go('wds'); });
+    /* r29.10：只读探测登录态，按钮在「登录 LuCI」/「已登录 · 退出」间切换；不参与跳转 */
+    fetch('/cgi-bin/luci/admin/status/vs010_setup/probe?_='+Date.now(),
+          {credentials:'same-origin',cache:'no-store'})
+      .then(function(r){return r.json();})
+      .then(function(j){
+        var b=document.getElementById('authBtn'), st=document.getElementById('authState');
+        if(b){b.href=j.ok?'/cgi-bin/luci/admin/logout':'/cgi-bin/luci/';
+              b.textContent=j.ok?'🔑 已登录 · 退出':'🔑 登录 LuCI';}
+        if(st) st.textContent=j.ok?'已登录 · 可保存设置':'未登录 · 只读';
+      }).catch(function(){});
 })();
 </script></body></html>

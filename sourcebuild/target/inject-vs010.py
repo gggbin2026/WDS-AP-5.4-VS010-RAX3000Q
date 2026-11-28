@@ -42,7 +42,7 @@ if 'cucc_vs010' not in s:
     s=s.replace('\tcmcc_rax3000q \\\n','\tcmcc_rax3000q \\\n\tcucc_vs010 \\\n',1)
     gen='$(eval $(call generate-ipq-wifi-package,cmcc_rax3000q,CMCC RAX3000Q))'
     assert gen in s, 'generate 列表缺锚点'
-    s=s.replace(gen,gen+'\n$(eval $(call generate-ipq-wifi-package,cucc_vs010,CUCC VS010 (Unicom)))',1)
+    s=s.replace(gen,gen+'\n$(eval $(call generate-ipq-wifi-package,cucc_vs010,CUCC VS010 Unicom))',1)
     mk.write_text(s)
 print('  [inject] ipq-wifi/Makefile 注册 cucc_vs010')
 
@@ -56,3 +56,14 @@ for n in ['board-cucc_vs010.ipq5018','board-cucc_vs010.qcn6122']:
     assert len(d)==131156 and d[:17]==b'QCA-ATH11K-BOARD\0', n+' 容器格式错'
     assert b'qmi-board-id=' in d[36:73], n+' 缺 board-id'
 print('  [inject] ✅ DTS / Device / board.d / 2 个 BDF / 包注册 全部落位')
+
+# ── 7. r29.6：编译前护栏（在源码树根跑，失败立刻停，不等 1h19m）──
+import subprocess
+pf = W / 'tools/preflight-vs010.sh'
+if pf.is_file():
+    r = subprocess.run(['sh', str(pf), str(W)], cwd='.')
+    if r.returncode:
+        print('::error::[preflight] VS010 注入自检未通过，已停止编译')
+        sys.exit(1)
+else:
+    print('::error::[preflight] 缺 tools/preflight-vs010.sh'); sys.exit(1)

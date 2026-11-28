@@ -1,0 +1,103 @@
+#!/bin/sh
+# r29.11 · WDS 客户端「搜索周边主端」只读扫描端点。
+# 🔴 零用户参数：接口自己探测，命令串写死，不接受任何 HTTP 输入 → 无命令注入面。
+# 🔴 只读：只做一次主动扫描，不写 UCI、不改无线、不 reload、不重启。
+#    调用方是 LuCI admin 树下的 vs010_setup/scan（未登录 403）。
+# 输出：{"ok":1,"iface":"ath1","tool":"iw","aps":[{ssid,bssid,freq,channel,band,signal,enc}]}
+#       失败给 {"ok":0,"msg":"..."}，前端如实显示，不伪造 SSID。
+# 保留调用方 PATH（LuCI/uhttpd 给定），只补齐系统路径；不覆盖以便工具探测可注入测试
+PATH="${PATH:-/usr/sbin:/usr/bin:/sbin:/bin}:/usr/sbin:/usr/bin:/sbin:/bin"; export PATH
+
+# 与 vs010-wds-pair 的 vap() 完全一致的探测顺序（QSDK: ath1/wifi1 是 5G VAP）
+iface(){
+  for i in ath1 wifi1 wlan1 ath0 wifi0 wlan0; do
+    [ -d "/sys/class/net/$i" ] && { printf '%s' "$i"; return; }
+  done
+  printf ''
+}
+
+# JSON 转义由 awk 解析器就地完成；本脚本不接收任何位置参数或 HTTP 输入。
+
+# ── ① 主路径：iw dev <iface> scan（cfg80211 / mac80211，本源码线 .config 已编入）──
+scan_iw(){
+  awk '
+  function jstr(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); return s }
+  function band(f){ return (f>=5000)?"5G":"2.4G" }
+  function chan(f,c){ if(c!="") return c;
+    if(f>=5000) return int((f-5000)/5); else return int((f-2407)/5) }
+  function flush(   s){
+    if(!has) return
+    if(bssid=="") return
+    if(ssid=="") { has=0; return }          # 隐藏 SSID 不列（点选没法填）
+    s=sprintf("{\"ssid\":\"%s\",\"bssid\":\"%s\",\"freq\":%d,\"channel\":%d,\"band\":\"%s\",\"signal\":\"%s\",\"enc\":\"%s\"}",
+      jstr(ssid),jstr(bssid),freq,chan(freq,ch),band(freq),jstr(sig),jstr(enc))
+    out[++n]=s; has=0
+  }
+  /^BSS / {
+    flush()
+    bssid=$2; sub(/\(.*/,"",bssid)
+    ssid="";freq=0;sig="";ch="";enc="open";has=1;next
+  }
+  has {
+    line=$0
+    if(line ~ /^[[:space:]]*SSID:/){ sub(/^[[:space:]]*SSID: ?/,"",line); ssid=line }
+    else if(line ~ /^[[:space:]]*freq:/){ gsub(/[^0-9]/,"",$2); freq=$2+0 }
+    else if(line ~ /^[[:space:]]*signal:/){ sig=$2; sub(/\.00$/,"",sig) }
+    else if(line ~ /DS Parameter set: channel/){ ch=$NF+0 }
+    else if(line ~ /^[[:space:]]*RSN:/){ enc="WPA2/WPA3" }
+    else if(line ~ /^[[:space:]]*WPA:/){ if(enc=="open") enc="WPA" }
+    else if(line ~ /Privacy/){ if(enc=="open") enc="加密" }
+  }
+  END{ flush();
+    printf "["; for(i=1;i<=n;i++){ if(i>1)printf ","; printf "%s",out[i] }; printf "]" }
+  '
+}
+
+# ── ② 兜底：QSDK wlanconfig list scan（列式；只取能稳定识别的行）──
+scan_wlanconfig(){
+  awk '
+  function jstr(s){ gsub(/\\/,"\\\\",s); gsub(/"/,"\\\"",s); return s }
+  function band(f){ return (f>=5000)?"5G":"2.4G" }
+  NR==1 { next }                     # 表头
+  {
+    mac=""; ch=""; ssid=""; sig=""
+    for(i=1;i<=NF;i++){
+      t=$i
+      # mawk 不支持 {n} 区间量词，用长度+字符集判定 MAC
+      if(t ~ /^[0-9a-fA-F:]+$/ && length(t)==17 && t ~ /:/ && mac=="") mac=t
+      else if(t ~ /^[0-9]+$/ && ch=="") ch=t          # 纯正数 = 信道（mawk 不支持 {n}）
+      else if(t ~ /^-[0-9]+$/ && sig=="") sig=t        # 负数 = dBm 信号
+      else if(t !~ /^[0-9+\-]+$/ && t !~ /^[\[\]()]+$/ && length(t)>0) ssid=(ssid==""?t:ssid" "t)
+    }
+    if(mac==""||ssid=="") next
+    c=ch+0; f=(c>=36)?(5000+c*5):(2407+c*5)
+    s=sprintf("{\"ssid\":\"%s\",\"bssid\":\"%s\",\"freq\":%d,\"channel\":%d,\"band\":\"%s\",\"signal\":\"%s\",\"enc\":\"%s\",\"approx\":1}",
+      jstr(ssid),jstr(mac),f,c,band(f),jstr(sig),"未知")
+    out[++n]=s
+  }
+  END{ printf "["; for(i=1;i<=n;i++){ if(i>1)printf ","; printf "%s",out[i] }; printf "]" }
+  '
+}
+
+V=$(iface)
+if [ -z "$V" ]; then
+  printf '{"ok":0,"msg":"未找到可用的无线接口（ath1/wifi1/wlan1…）；请确认 5G radio 已启动"}\n'
+  exit 0
+fi
+
+OUT=''; TOOL=''
+if command -v iw >/dev/null 2>&1; then
+  RAW=$(timeout 8 iw dev "$V" scan 2>/dev/null)
+  if [ -n "$RAW" ]; then OUT=$(printf '%s\n' "$RAW" | scan_iw); TOOL='iw'; fi
+fi
+if [ -z "$OUT" ] && command -v wlanconfig >/dev/null 2>&1; then
+  RAW=$(timeout 8 wlanconfig "$V" list scan 2>/dev/null)
+  if [ -n "$RAW" ]; then OUT=$(printf '%s\n' "$RAW" | scan_wlanconfig); TOOL='wlanconfig'; fi
+fi
+if [ -z "$OUT" ]; then
+  printf '{"ok":0,"msg":"未找到 iw / wlanconfig 扫描工具，或扫描超时；可到高级设置后台用 SSH 执行 iw dev %s scan"}\n' "$V"
+  exit 0
+fi
+# 去重（同 SSID 多 BSSID 时保留全部，便于定向桥接；按信号排序交给前端）
+printf '{"ok":1,"iface":"%s","tool":"%s","aps":%s}\n' "$V" "$TOOL" "$OUT"
+exit 0

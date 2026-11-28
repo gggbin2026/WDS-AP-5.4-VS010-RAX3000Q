@@ -155,7 +155,6 @@
 			bias-pull-up;
 		};
 	};
-	};
 };
 
 &blsp1_uart1 {

@@ -25,4 +25,12 @@ grep -Fxq '# CONFIG_PACKAGE_autocore-arm is not set' .config \
   || { echo "::error::[STANDARDS] autocore-arm 未关，内存不达标"; exit 1; }
 echo "[STANDARDS] OK  SSH(dropbear) + 串口(ttyMSM0) + TTYD + 速率 + 无线 + 低内存"
 
+# ── r29.4：编译期物理删除 PPP / IPv6 协议包（在 make defconfig 之前）──
+W="${GITHUB_WORKSPACE:-$(cd .. && pwd)}/sourcebuild"
+[ -f "$W/tools/strip-protocols.sh" ] || { echo "::error::缺 strip-protocols.sh"; exit 1; }
+sh "$W/tools/strip-protocols.sh"
+# ── r29.5：保守裁内核 L3 协议（必须在 make defconfig 之前改 target/linux/config-5.4*）──
+[ -f "$W/tools/slim-kernel.sh" ] || { echo "::error::缺 slim-kernel.sh"; exit 1; }
+sh "$W/tools/slim-kernel.sh"
+
 echo "[diy-p2] ✅ 完成"

@@ -7,6 +7,13 @@ function index()
     entry({"admin", "status", "vs010_ports"}, call("show"), _("网口状态"), 90)
 end
 
+local function cur_mode()
+    local f = io.open("/etc/vs010/mode", "r")
+    if not f then return "wds" end
+    local m = f:read("*l") or "wds"; f:close()
+    return (tostring(m):gsub("%s+", "") == "ap") and "ap" or "wds"
+end
+
 function show()
     local sys = require "luci.sys"
     local tpl = require "luci.template"
@@ -21,5 +28,5 @@ function show()
             if #p >= 6 then rows[#rows + 1] = p end
         end
     end
-    tpl.render("vs010_ports", { rows = rows })
+    tpl.render("vs010_ports", { rows = rows, mode = cur_mode() })
 end

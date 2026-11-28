@@ -21,8 +21,13 @@ grep -Fq 'Build 5.4 source firmware (r29' "$W" && ok 'workflow 为 r29 单线双
 [ ! -e "$FUSED" ] && ok '融合线 workflow 已移除' || bad '融合线残留'
 [ -s ../verify.sh ] && grep -Fq 'exec sh sourcebuild/tools/verify.sh' ../verify.sh \
   && ok '根 verify.sh 指向单线自检' || bad '根入口不对'
-[ -s ../README.md ] && grep -Fq '全能包' ../README.md \
-  && ok '根 README = 全能包总入口（含清空仓库步骤）' || bad 'README 不对'
+  [ -s ../README.md ] && grep -Fq '## 内核与平台' ../README.md \
+    && grep -Fq '## 内置功能与插件' ../README.md \
+    && grep -Fq '## 编译产物' ../README.md \
+    && grep -Fq '## 资料索引' ../README.md \
+    && grep -Fq 'CHANGELOG.md' ../README.md \
+    && ! grep -Fq '| **r2' ../README.md \
+    && ok '根 README = 简短主页（内核/插件/产物/索引，修复记录移交 CHANGELOG）' || bad 'README 不对'
 grep -Fq 'sourcebuild/' "$W" && ok '源码线路径全部隔离在 sourcebuild/' || bad '路径未隔离'
 ! grep -Fq 'sourcebuild/sourcebuild/' "$W" && ok '无双重前缀' || bad '双重前缀残留'
 for f in tools/parse-vs010-backup.py ../reference/backup/VS010-实机备份取证.md \
@@ -63,7 +68,8 @@ grep -Fq 'kkstone/immortalwrt-ipq50xx' "$W" && ok '源码 = kkstone 21.02 (QSDK 
 grep -Fq 'openwrt-21.02' "$W" && ok '分支 openwrt-21.02' || bad '分支不对'
 grep -Fq 'linux-5.4-qsdk-11.5.0.5' "$W" && ok '预置 QSDK 内核 tarball' || bad '缺内核 tarball'
 grep -Fq 'backports-20210222-5.4-qsdk-11.5.0.5' "$W" && ok '预置 backports tarball' || bad '缺 backports'
-grep -Fq 'make -j$(nproc) || make -j1 || make -j1 V=s' "$W" && ok '真实 make 编译（非融合重打包）' || bad '不是真编译'
+grep -Fq 'make -j$(nproc)' "$W" && grep -Fq 'make -j1 V=s' "$W" \
+  && ok '真实 make 编译（r29.6 起三轮重试 + tee 日志，非融合重打包）' || bad '不是真编译'
 grep -Fq 'date +%Y%m%d-%H%M' "$W" && ok '固件名带详细日期 YYYYMMDD-HHMM' || bad '日期不够详细'
 grep -Fq 'Nwrt-QSDK12.2-5.4-' "$W" && ok '命名前缀沿用旧要求' || bad '命名前缀变了'
 grep -Fq 'permissions:' "$W" && grep -Fq 'contents: write' "$W" && ok 'Release 权限显式授予' || bad '缺权限'
@@ -399,13 +405,17 @@ grep -Fq 'cur_theme=$(uci -q get luci.main.mediaurlbase' files/etc/init.d/vs010-
 grep -Fq 'local ACTS' "$CT2" && grep -Fq '"vs010_setup", "act"' "$CT2" \
   && grep -Fq 'ACTS[a]' "$CT2" \
   && ok '维护动作走白名单枚举（固定命令、零参数、需登录）' || bad '动作端点缺/可被注入'
-grep -Fq '不提供「开启 DHCP 服务端」按钮' "$JS2" \
-  && ok '面板不提供开 DHCP 按钮（防内网地址混乱）' || bad '存在误开 DHCP 入口'
+  # r29.7：AP 可选 DHCP 服务端（入口存在，但 WDS 与后端双重硬禁）
+  grep -Fq 'sec_dhcp' "$JS2" && grep -Fq 'ds.querySelectorAll' "$JS2" \
+    && grep -Fq '本机 DHCP 服务端被后台硬禁止' "$JS2" \
+    && grep -Fq 'WDS 网桥主 / 客户端两端硬禁止 DHCP 服务端' "$JS2" \
+    && ok 'DHCP 入口仅 AP 可用：前端按模式锁定 + 红字保留' || bad 'DHCP 入口未受控'
 for k in 'ap2_ssid' 'ap5_ssid' 'htmode' 'txpower' 'wmm' 'mumimo' 'mgmt_ip' 'mgmt_mask' \
-         'hostname' 'stp' 'ntp_server' 'ntp_interval' 'theme'; do
+           'hostname' 'stp' 'ntp_server' 'ntp_interval' 'theme' \
+           'dhcp_enabled' 'dhcp_start' 'dhcp_limit' 'dhcp_leasetime'; do
   grep -Fq "$k" "$AC2" || bad "后台缺 $k"
 done
-ok '后台 27 字段：双频独立 SSID / 频宽 / 功率 / WMM / 网络 / 时间 / 主题'
+ok '后台 31 字段：双频 SSID / 射频 / 网络 / 时间 / 主题 / AP DHCP 地址池与租期'
 grep -Fq 'apply_radio' files/etc/init.d/vs010-mode \
   && grep -Fq 'txpower' files/etc/init.d/vs010-mode \
   && ok '开机脚本重读射频高级项（重启不丢）' || bad '射频未联动'
@@ -413,10 +423,11 @@ grep -Fq 'S5=$(cfg_get ap5_ssid)' files/etc/init.d/vs010-mode \
   && ok 'AP 模式 2.4G / 5G 可各用独立 SSID 密码' || bad '双频 SSID 未分离'
 ! grep -q 'eval "V_\$k=\$v"' "$AC2" \
   && ok '去掉 eval 写值：SSID 含空格/括号不会被执行（注入修复）' || bad '仍存在 eval 注入面'
-for k in '① 工作模式' '② WDS' '③ AP 无线' '④ WiFi 射频' '⑤ 网络与本机' '⑥ 外观' '⑦ 维护与自检'; do
+  for k in '① 工作模式' '② WDS' '③ AP 无线' '④ WiFi 射频' '⑤ 网络与本机' \
+           '⑥ DHCP 服务' '⑦ 外观' '⑧ 维护与自检'; do
   grep -Fq "$k" "$JS2" || bad "面板缺分组 $k"
 done
-ok '设置控制台 7 个分组（常用设置全覆盖）'
+ok '设置控制台 8 个分组（常用设置全覆盖，含 AP DHCP）'
 grep -Fq '高级设置后台' "$JS2" && grep -Fq '/cgi-bin/luci/' "$JS2" \
   && ok '高深操作明确引导到「高级设置后台」（OpenWrt / LuCI）' || bad '缺高级入口'
 grep -Fq '改 root 登录密码' "$JS2" && ok '明确不改 root 密码（避免与开机归一打架）' || bad '缺边界说明'
@@ -713,6 +724,748 @@ echo
 
 
 
+<<<<<<< Updated upstream
+=======
+
+
+
+
+
+
+
+
+
+
+echo "── r29.12：2.4G 20/40MHz 共存 · 5.8G 160MHz · 固件标识 WDS/AP（仿UBNT）──"
+AC12=files/usr/sbin/vs010-apply-config
+MD12=files/etc/init.d/vs010-mode
+JS12=files/www/vs010-setup.js
+grep -Fq 'ht24' "$AC12" && grep -Fq 'ht24' "$MD12" && grep -Fq 'ht24' "$JS12" \
+  && ok 'ht24 三处联动（后台 / 开机 / 前端）' || bad 'ht24 缺联动'
+grep -Fq '"htmode":"HT160","ht24":"HT40"' "$AC12" \
+  && ok '默认：5.8G HT160（160MHz 满速）/ 2.4G HT40（20/40 共存）' || bad '默认值不对'
+grep -Fq "case \"\$v\" in ''|HT160|HT80|HT40)" "$AC12" \
+  && grep -Fq "case \"\$v\" in ''|HT40|HT20)" "$AC12" \
+  && ok '双白名单：5G 拒 HT20 / 2.4G 拒 HT160·HT80（交叉串写会拒）' || bad '白名单不对'
+grep -Fq 'case "$H5" in HT160|HT80|HT40)' "$AC12" \
+  && grep -Fq 'case "$H2" in HT40|HT20)' "$AC12" \
+  && ok 'AP 模式内联：按 radio 的 hwmode 分组分别写频宽' || bad 'AP 内联频宽缺'
+grep -Fq 'case "$HT" in HT160|HT80|HT40)' "$MD12" \
+  && grep -Fq 'case "$HT2" in HT40|HT20)' "$MD12" \
+  && ok '开机脚本：5G/2.4G 双分支 + 非法残留值跳过保护' || bad '开机双分支缺'
+grep -Fq 'uci -q set "wireless.$d.htmode=HT160"' files/usr/sbin/vs010-wds-pair \
+  && grep -Fq 'WDS 回程固定在 5.8G 160MHz' files/usr/sbin/vs010-wds-pair \
+  && ok 'WDS 回程固定 5.8G 160MHz（2.4G 不参与桥接）' || bad 'WDS 回程频宽被改'
+grep -Fq "['HT160','HT80','HT40']" "$JS12" \
+  && grep -Fq "[['HT40','HT40 · 20/40MHz 共存'],['HT20','HT20 · 仅 20MHz']]" "$JS12" \
+  && ok '面板 ④ 两个独立下拉：5.8G 160MHz / 2.4G 20·40 共存' || bad '前端下拉缺'
+! grep -Fq 'HE160|HE80|VHT80' "$AC12" \
+  && ok '仍不放行 qcawifi.sh 不认的 HE160/VHT80（防 5G 起不来）' || bad '踩雷值回来了'
+python3 - <<'PYR2912'
+import pathlib,subprocess,tempfile,os,shutil
+src=pathlib.Path('files/usr/sbin/vs010-apply-config').read_text()
+base=pathlib.Path(tempfile.mkdtemp()); D=base/'etc/vs010'; D.mkdir(parents=True)
+b=base/'bin'; b.mkdir()
+for n,body in {'uci':'#!/bin/sh\nexit 0\n','logger':'#!/bin/sh\nexit 0\n',
+               'ip':'#!/bin/sh\necho 172.10.10.241\n','wifi':'#!/bin/sh\nexit 0\n',
+               'vs010-wds-pair':'#!/bin/sh\nexit 0\n','vs010-role':'#!/bin/sh\nexit 0\n'}.items():
+    f=b/n; f.write_text(body); f.chmod(0o755)
+cg=base/'apply'; cg.write_text(src); cg.chmod(0o755)
+env=dict(os.environ,VS010_DIR=str(D),VS010_PATH=str(b)+':/usr/sbin:/usr/bin:/sbin:/bin')
+def run(text):
+    q=base/'in'; q.write_text(text)
+    return subprocess.run(['sh',str(cg),'apply',str(q)],env=env,capture_output=True,text=True,timeout=30)
+r=run('htmode=HT160\nht24=HT40\n')
+assert r.returncode==0 and '{"ok":1' in r.stdout, ('合法双值被拒',r.stdout[:200])
+cfg=(D/'user.cfg').read_text()
+assert 'htmode=HT160' in cfg and 'ht24=HT40' in cfg, ('落盘不对',cfg[:300])
+print('  正例：5.8G HT160 + 2.4G HT40(20/40共存) 落盘 OK')
+for bad,why in [('ht24=HT160\n','2.4G 写 160MHz'),('ht24=HT80\n','2.4G 写 80MHz'),
+                ('htmode=HT20\n','5.8G 写 HT20'),('ht24=HE40\n','2.4G 写 mac80211 写法')]:
+    r=run(bad)
+    assert '"ok":0' in r.stdout, (why,'没被拒',r.stdout[:120])
+    print('  负例被拒：'+why)
+shutil.rmtree(base,ignore_errors=True)
+PYR2912
+[ $? = 0 ] && ok 'mock 真跑：合法双频宽落盘 + 4 个交叉负例全被拒' || bad '双频宽后台真跑失败'
+grep -Fxq 'WDS/AP（仿UBNT）' files/etc/vs010/product \
+  && grep -Fq 'WDS/AP（仿UBNT）' files/etc/banner \
+  && ok '固件内 /etc/vs010/product + SSH banner 写入产品标识' || bad 'product/banner 缺'
+grep -Fxq 'etc/vs010/product' files.manifest && grep -Fxq 'etc/banner' files.manifest \
+  && ok '两个标识文件已注册进 files.manifest（会编进固件）' || bad 'manifest 漏注册'
+grep -Fq 'Nwrt-QSDK12.2-5.4-WDS-AP-UBNT-' ../.github/workflows/build-source.yml \
+  && grep -Fq 'WDS/AP（仿UBNT）' ../.github/workflows/build-source.yml \
+  && ok '编译产物文件名带 WDS-AP-UBNT + Release 标注产品名' || bad 'workflow 产品标识缺'
+grep -Fq '5.8G 固定 160MHz' ../.github/workflows/build-source.yml \
+  && grep -Fq '2.4G 默认 HT40' ../.github/workflows/build-source.yml \
+  && ok 'Release 说明写明 5.8G 160MHz / 2.4G 20·40 共存' || bad 'Release 频宽说明缺'
+for F12 in files/www/vs010-ubnt-skin.js files/www/ubnt/index.html files/www/bridge/index.html \
+           files/www/ap/index.html files/www/index.html; do
+  grep -Fq 'WDS/AP' "$F12" || bad "$F12 缺产品标识"
+done
+ok '三界面 + 根跳转页均显示 WDS/AP（仿UBNT）'
+grep -Fq 'WDS/AP（仿UBNT）' ../README.md \
+  && grep -Fq '5.8G' ../README.md && grep -Fq '20/40MHz 共存' ../README.md \
+  && ok 'README 写明产品标识与双频宽口径' || bad 'README 未同步'
+grep -Fq 'Nwrt-QSDK12.2-5.4-' ../.github/workflows/build-source.yml \
+  && grep -Fq -- '-dual-squashfs-nand-factory.ubi' ../.github/workflows/build-source.yml \
+  && ok '固件命名前缀/后缀仍沿用（不打乱既有下载脚本）' || bad '命名前缀或后缀被破坏'
+for F12 in files/usr/sbin/vs010-apply-config files/etc/init.d/vs010-mode files/usr/sbin/vs010-wds-pair; do
+  sh -n "$F12" || bad "$F12 sh -n 失败"
+done
+node --check files/www/vs010-setup.js && node --check files/www/vs010-ubnt-skin.js \
+  && ok '全部改动脚本 sh -n / node --check 通过' || bad '脚本语法错'
+
+echo "── r29.11：网桥界面搜索周边 SSID + 自动跟随 WDS 组频段 ──"
+SC11=files/usr/sbin/vs010-scan
+grep -Fqx 'usr/sbin/vs010-scan' files.manifest && [ -x "$SC11" ] \
+  && ok 'vs010-scan 已注册进 files.manifest 且可执行' || bad '扫描脚本缺或未注册'
+sh -n "$SC11" && ok 'vs010-scan sh -n 通过' || bad '扫描脚本语法错'
+# 零参数 / 只读：不读 $1、不写 UCI、不 reload
+! grep -Eq '\$1|formvalue|http\.formvalue' "$SC11" \
+  && ! grep -Eq 'uci (set|commit)|wifi reload|/etc/init.d' "$SC11" \
+  && ok '扫描零用户参数 + 纯只读（不写 UCI / 不 reload / 不重启）' || bad '扫描脚本有写入面'
+grep -Fq 'timeout 8 iw dev' "$SC11" && grep -Fq 'wlanconfig' "$SC11" \
+  && ok 'iw 主解析 + wlanconfig 兜底，8 秒超时防卡死' || bad '扫描工具链缺'
+# controller：admin 树 / 403 / 零参数
+CT11=files/usr/lib/lua/luci/controller/admin/vs010_setup.lua
+grep -Fq 'entry({"admin", "status", "vs010_setup", "scan"}, call("scan"))' "$CT11" \
+  && grep -Fq 'function scan()' "$CT11" \
+  && grep -Fq 'http.status(403, "Forbidden")' "$CT11" \
+  && grep -Fq '/usr/sbin/vs010-scan' "$CT11" \
+  && ! grep -A12 'function scan()' "$CT11" | grep -Fq 'formvalue' \
+  && ok 'scan 端点在 admin 树（未登录 403）、零 HTTP 参数' || bad 'scan 端点鉴权/参数异常'
+python3 tools/luacheck.py >/tmp/luacheck11.out 2>&1 \
+  && ok '加 scan 端点后全部 LuCI controller Lua 词法仍全过' || bad "$(cat /tmp/luacheck11.out)"
+# 后端 mock 真跑：iw / wlanconfig / 无工具 / 无接口 四例
+python3 - <<'PYSCAN11'
+import pathlib,tempfile,subprocess,os,json,shutil
+base=pathlib.Path(tempfile.mkdtemp()); bin_=base/'bin'; bin_.mkdir()
+sysd=base/'sys/class/net'; (sysd/'ath1').mkdir(parents=True)
+src0=pathlib.Path('files/usr/sbin/vs010-scan').read_text().replace('/sys/class/net',str(sysd))
+cg=base/'vs010-scan'; cg.write_text(src0); cg.chmod(0o755)
+env=dict(os.environ,PATH=str(bin_)+':/usr/sbin:/usr/bin:/sbin:/bin')
+def run(): return json.loads(subprocess.run(['sh',str(cg)],env=env,capture_output=True,text=True,timeout=30).stdout)
+(bin_/'iw').write_text("""#!/bin/sh
+cat <<'EOF'
+BSS aa:bb:cc:dd:ee:01(on ath1)
+	freq: 5180
+	signal: -48.00 dBm
+	DS Parameter set: channel 36
+	RSN:     Version: 2
+	SSID: WDS Bridge Z (5G)
+BSS 11:22:33:44:55:66(on ath1)
+	freq: 2437
+	signal: -71.00 dBm
+	DS Parameter set: channel 6
+	WPA:     Version: 1
+	SSID: Guest 2.4G
+BSS de:ad:be:ef:00:01(on ath1)
+	freq: 5200
+	SSID: 
+EOF
+"""); (bin_/'iw').chmod(0o755)
+j=run(); assert j['ok']==1 and len(j['aps'])==2, j
+assert j['aps'][0]['ssid']=='WDS Bridge Z (5G)' and j['aps'][0]['channel']==36 and j['aps'][0]['band']=='5G'
+assert j['aps'][1]['channel']==6 and j['aps'][1]['band']=='2.4G' and j['aps'][1]['enc']=='WPA'
+print('  SCAN iw：空格 SSID / 5G ch36 / 2.4G ch6 / 隐藏 SSID 过滤 ✅')
+(bin_/'iw').unlink()
+(bin_/'wlanconfig').write_text("""#!/bin/sh
+cat <<'EOF'
+CHAN  BSSID              SSID        SIGNAL
+36    aa:bb:cc:dd:ee:01  WDS-Z-5G    -48
+6     11:22:33:44:55:66  Guest-24G   -71
+EOF
+"""); (bin_/'wlanconfig').chmod(0o755)
+j=run(); assert j['ok']==1 and j['tool']=='wlanconfig' and len(j['aps'])==2, j
+assert j['aps'][0]['channel']==36 and j['aps'][0]['band']=='5G' and all(a['approx']==1 for a in j['aps'])
+print('  SCAN wlanconfig 兜底：标注 approx 估算、不伪装精确 ✅')
+(bin_/'wlanconfig').unlink()
+j=run(); assert j['ok']==0 and '扫描工具' in j['msg'], j
+print('  SCAN 无工具：如实报错、不伪造 SSID ✅')
+cg.write_text(src0.replace(str(sysd),str(base/'none')))
+j=run(); assert j['ok']==0 and '无线接口' in j['msg'], j
+print('  SCAN 无接口：如实报错 ✅')
+shutil.rmtree(base,ignore_errors=True)
+PYSCAN11
+[ $? = 0 ] && ok 'vs010-scan mock 真跑四例全过（iw 主 / 兜底 / 无工具 / 无接口）' || bad '扫描脚本解析异常'
+# 前端
+JS11=files/www/vs010-setup.js
+for K11 in 'id="f_scan"' 'id="scanList"' 'id="scanHint"' 'function doScan()' 'function pickScan(i)' \
+           "BASE+'/scan" "setVal('f_peer_ssid'" "setVal('f_peer_bssid'" "f_ch5g':'f_ch24g" \
+           "r.checked=true" '频段自动跟随' '扫描已锁定'; do
+  grep -Fq "$K11" "$JS11" || bad "前端缺 $K11"
+done
+ok '② WDS 分组有搜索按钮/结果表/选用联动/未登录锁定'
+grep -Fq 'btn.onclick=doScan' "$JS11" || grep -Fq 'sb.onclick=doScan' "$JS11" \
+  && ok '扫描按钮已绑定事件' || bad '扫描按钮没绑事件'
+! grep -Fq "vs010_setup/save" "$JS11" || true
+node --check "$JS11" && ok 'setup.js 加扫描后 node --check 通过' || bad 'setup.js 语法错'
+python3 - <<'PYJS11'
+import pathlib,re,subprocess
+for n in ('bridge','ap','ubnt','index'):
+    p=f'files/www/{n}/index.html' if n!='index' else 'files/www/index.html'
+    s=pathlib.Path(p).read_text()
+    for j in re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>',s,re.S):
+        r=subprocess.run(['node','--check'],input='(function(){'+j+'})',text=True,capture_output=True)
+        assert r.returncode==0,(n,r.stderr[:150])
+print('  三页 + 根页内联 JS 仍全过')
+PYJS11
+[ $? = 0 ] && ok '三页 + 根页内联 JS 语法全过' || bad '内联 JS 语法错'
+# 后台闭环：ch5g / peer_bssid 落盘后 wds-pair 会读
+WP11=files/usr/sbin/vs010-wds-pair
+grep -Fq 'c=$(cfg_get ch5g)' "$WP11" \
+  && grep -Fq 'wireless.$d.channel=$WDS_CH' "$WP11" \
+  && grep -Fq 'WDS_BSSID=$(cfg_get peer_bssid)' "$WP11" \
+  && grep -Fq 'wireless.$primary.bssid=$WDS_BSSID' "$WP11" \
+  && ok '后台闭环：ch5g→5G radio 信道 / peer_bssid→定向桥接，WDS 主客同频段' || bad '后台闭环断了'
+AC11=files/usr/sbin/vs010-apply-config
+grep -Fq 'peer_bssid|' "$AC11" && grep -Fq 'ch5g' "$AC11" \
+  && ok 'apply-config 白名单仍收 peer_ssid/peer_key/peer_bssid/ch5g' || bad '字段白名单被改'
+# 既有功能未破坏
+grep -Fq "h+=sec('② WDS 主 / 客户端'" "$JS11" \
+  && grep -Fq "h+=sec('⑥ DHCP 服务" "$JS11" \
+  && grep -Fq "border-radius:999px" "$JS11" \
+  && ok '② WDS / ⑥ DHCP 分组与全椭圆仍在（没被扫描块挤掉）' || bad '既有分组被破坏'
+# 截图
+N11=0
+for I11 in WDS扫描-全景.png WDS扫描-面板.png WDS扫描-竖屏.png; do
+  [ -s "../demo/$I11" ] && N11=$((N11+1))
+done
+[ "$N11" = 3 ] && ok 'demo/ 扫描结果 3 张 Chromium 真渲染截图齐' || bad "截图缺 $N11/3"
+
+echo "── r29.10：四类界面全互访 / 登录贯通（UBNT 正式替换 AP 与网桥界面后）──"
+T10='/ubnt/ /bridge/ /ap/ /cgi-bin/luci/ /cgi-bin/luci/admin/status/vs010_setup /cgi-bin/luci/admin/logout'
+for F10 in files/www/vs010-ubnt-skin.js files/www/ubnt/index.html files/www/index.html; do
+  MISS10=''
+  for X10 in $T10; do grep -Fq "$X10" "$F10" || MISS10="$MISS10 $X10"; done
+  N10=$(echo "$F10" | sed 's#files/www/##')
+  [ -z "$MISS10" ] && ok "$N10 有全 6 个互访/登录入口" || bad "$N10 缺:$MISS10"
+done
+for T in vs010_bridge.htm vs010_ap.htm vs010_console.htm vs010_ports.htm vs010_role.htm vs010_setup.htm; do
+  F10="files/usr/lib/lua/luci/view/$T"; MISS10=''
+  for X10 in $T10; do grep -Fq "$X10" "$F10" || MISS10="$MISS10 $X10"; done
+  [ -z "$MISS10" ] && ok "$T 有全 6 个互访/登录入口" || bad "$T 缺:$MISS10"
+done
+ok '四类界面（两页注入器 / 概览 / 根跳转 / LuCI 六视图）全部可互相点开'
+# 登录态：两页零新增请求复用 probe；四类界面都有登录/退出
+grep -Fq 'function auth(on)' files/www/vs010-ubnt-skin.js \
+  && grep -Fq 'auth(!!j.ok)' files/www/vs010-ubnt-skin.js \
+  && grep -Fq 'vs010_setup' files/www/vs010-ubnt-skin.js \
+  && ok '两页登录态靠 hook + clone() 复用共用控制台的 probe，零新增请求' || bad '登录态探测缺'
+grep -Fq 'function setAuth(on)' files/www/ubnt/index.html \
+  && grep -Fq '/cgi-bin/luci/admin/logout' files/www/ubnt/index.html \
+  && ok '概览页按 probe 切「登录 LuCI / 已登录 · 退出」' || bad '概览登录态缺'
+grep -Fq 'authBtn' files/www/index.html \
+  && grep -Fq '/cgi-bin/luci/admin/logout' files/www/index.html \
+  && ok '根跳转页也带登录/退出按钮（不影响 3 秒兜底跳转）' || bad '根页登录态缺'
+grep -Fq '已登录 · 退出' files/usr/lib/lua/luci/view/vs010_setup.htm \
+  && ok 'LuCI 视图本身在 admin 树（能打开即已登录），固定给「退出」按钮' || bad 'LuCI 退出按钮缺'
+# 不破坏 UBNT 皮肤与两页原有功能
+for P10 in bridge ap; do
+  F10="files/www/$P10/index.html"
+  [ "$(grep -c 'vs010-ubnt' "$F10")" = 2 ] \
+    && grep -Fq 'id="gaClock"' "$F10" && grep -Fq 'id="vs010-setup"' "$F10" \
+    && ok "$P10 页仍只 2 行引入、GAUGE/控制台/模式守卫全在" || bad "$P10 页被改坏"
+done
+! grep -Eq 'vs010_setup/(save|act)|/save|/act' files/www/vs010-ubnt-skin.js \
+  && ok '注入器仍零写入端点（登录/退出只是 GET 跳转）' || bad '注入器出现写入面'
+grep -Fq 'r.clone().json()' files/www/vs010-ubnt-skin.js \
+  && grep -Fq 'cgi-bin\/(bridge|apstatus)' files/www/vs010-ubnt-skin.js \
+  && ok 'KPI 仍 hook 主 CGI + clone()，不消费原页面 body' || bad 'fetch hook 被改坏'
+! grep -Eq '^\.wrap\{|^\.card\{|^\.gaPanel\{|^body\{' files/www/vs010-ubnt.css \
+  && grep -Fq 'body.ubnt-body' files/www/vs010-ubnt.css \
+  && grep -Fq '.u-jump{' files/www/vs010-ubnt.css \
+  && ok '共享 CSS 只加 u-* 类（含互访条），零覆盖两页原选择器' || bad 'CSS 覆盖原样式'
+grep -Fq 'overflow-x:auto' files/www/vs010-ubnt.css \
+  && grep -Fq 'overflow-x:auto' files/www/ubnt/index.html \
+  && ok '竖屏互访条横向滚动、不隐藏（手机上也能点全部界面）' || bad '竖屏互访条缺滚动'
+for T in vs010_bridge.htm vs010_ap.htm vs010_console.htm vs010_ports.htm vs010_role.htm vs010_setup.htm; do
+  grep -Fq 'class="vs010Back"' "files/usr/lib/lua/luci/view/$T" || bad "$T 原返回按钮被删"
+done
+ok 'LuCI 六视图原有「返回状态页」按钮全部保留'
+grep -Fq 'data-mode="auto"' files/usr/lib/lua/luci/view/vs010_setup.htm \
+  && ok '常用设置面板本体未动' || bad '设置面板被改坏'
+# 语法
+node --check files/www/vs010-ubnt-skin.js && node --check files/www/vs010-setup.js \
+  && ok '注入器 / 共用控制台 JS 语法全过' || bad 'JS 语法错'
+python3 - <<'PYJ10'
+import re,pathlib,subprocess
+for n in ('bridge','ap','ubnt','index'):
+    p=f'files/www/{n}/index.html' if n!='index' else 'files/www/index.html'
+    s=pathlib.Path(p).read_text()
+    for j in re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>',s,re.S):
+        r=subprocess.run(['node','--check'],input='(function(){'+j+'})',text=True,capture_output=True)
+        assert r.returncode==0,(n,r.stderr[:200])
+print('  三页 + 根页内联 JS node --check 全过')
+PYJ10
+[ $? = 0 ] && ok '三页 + 根页内联 JS 语法全过' || bad '内联 JS 语法错'
+python3 tools/luacheck.py >/tmp/luacheck10.out 2>&1 \
+  && ok 'LuCI 六视图加按钮条后 Lua 词法仍全过' || bad "$(cat /tmp/luacheck10.out)"
+N10=0
+for I10 in ubnt-bridge-宽屏.png ubnt-bridge-竖屏.png ubnt-ap-宽屏.png ubnt-ap-竖屏.png \
+           ubnt-宽屏.png ubnt-竖屏.png; do
+  [ -s "../demo/$I10" ] && N10=$((N10+1))
+done
+[ "$N10" = 6 ] && ok 'demo/ 三页 × 宽屏/竖屏 6 张 Chromium 真渲染截图（含互访条）齐' || bad "截图缺 $N10/6"
+
+echo "── r29.9：三个界面都要（/bridge/ /ap/ /ubnt/ 同款 UBNT 皮肤，三入口共存）──"
+for F9 in www/vs010-ubnt.css www/vs010-ubnt-skin.js www/ubnt/index.html; do
+  grep -Fqx "$F9" files.manifest || bad "files.manifest 缺 $F9"
+done
+[ -f files/www/vs010-ubnt.css ] && [ -f files/www/vs010-ubnt-skin.js ] \
+  && [ -f files/www/ubnt/index.html ] \
+  && ok '三页资源齐：共享 CSS / 注入器 / 概览页，且全部注册进 files.manifest' || bad '三页资源缺'
+# 两页只加 2 行，原有功能一个字节不能少
+for P9 in bridge ap; do
+  F9="files/www/$P9/index.html"
+  [ "$(grep -c 'vs010-ubnt' "$F9")" = 2 ] \
+    && grep -Fq '<link rel="stylesheet" href="../vs010-ubnt.css">' "$F9" \
+    && grep -Fq '<script src="../vs010-ubnt-skin.js"></script>' "$F9" \
+    && ok "$P9 页只在 head 加 2 行引入，未改任何原有节点" || bad "$P9 页引入异常"
+  M9=$P9; [ "$P9" = bridge ] && M9=wds
+  for K9 in 'id="gaClock"' 'id="gaUptime"' 'id="vs010-setup"' '系统仪表盘 · GAUGE' \
+            'vs010-setup.js' '网口状态'; do
+    grep -Fq "$K9" "$F9" || bad "$P9 页原有 $K9 被破坏"
+  done
+  grep -Fq "data-mode=\"$M9\"" "$F9" \
+    && ok "$P9 页原有 GAUGE / 时间徽章 / 控制台 / 网口 / 模式守卫全在" || bad "$P9 模式守卫被改"
+done
+# 共享 CSS 零覆盖
+grep -Fq 'body.ubnt-body' files/www/vs010-ubnt.css \
+  && grep -Fq '@media(max-width:900px)' files/www/vs010-ubnt.css \
+  && ! grep -Eq '^\.wrap\{|^\.card\{|^\.gaPanel\{|^body\{' files/www/vs010-ubnt.css \
+  && ok '共享 CSS 只定义 u-* / body.ubnt-body，不覆盖两页任何原有选择器' || bad '共享 CSS 覆盖原样式'
+# 注入器：零写入 + clone + 只接主 CGI
+SK9=files/www/vs010-ubnt-skin.js
+grep -Fq 'r.clone().json()' "$SK9" \
+  && grep -Fq 'cgi-bin\/(bridge|apstatus)' "$SK9" \
+  && grep -Fq '空值不覆盖' "$SK9" \
+  && ok 'KPI 靠 hook 原生 fetch + clone() 拿，零额外请求、不消费原页面 body' || bad 'fetch hook 异常'
+! grep -Eq 'vs010_setup/(save|act)|/save|/act' "$SK9" \
+  && ok '注入器零写入端点，未登录只读不变' || bad '注入器有写入面'
+grep -Fq 'D.body.classList.add' "$SK9" \
+  && grep -Fq "n.tagName==='SCRIPT'" "$SK9" \
+  && ok '外层包裹：只搬移非 script 节点，原脚本不重执行' || bad 'DOM 包裹方式异常'
+# 三页导航互通
+# 🔴 两页导航是注入器在 DOMContentLoaded 动态生成的，HTML 里不必有链接；查注入器即可
+grep -Fq "'/ubnt/'" files/www/vs010-ubnt-skin.js   && grep -Fq '/ubnt/' files/www/ubnt/index.html   && ok '概览入口在共享注入器与 /ubnt/ 里（两页导航动态生成）' || bad '缺概览入口'
+for F9 in files/www/vs010-ubnt-skin.js files/www/ubnt/index.html; do
+  grep -Fq '/bridge/' "$F9" && grep -Fq '/ap/' "$F9" && grep -Fq '/cgi-bin/luci/' "$F9" \
+    || bad "$F9 三入口导航不全"
+done
+ok '三页导航互通：概览 / 网桥状态 / AP 状态 / 常用设置 / 高级后台'
+# 深色统一
+grep -Fq -- '--nav:#0b1422' files/www/ubnt/index.html \
+  && grep -Fq -- '--u-nav:#0b1422' files/www/vs010-ubnt.css \
+  && grep -Fq -- '--bg:#0e1520' files/www/ubnt/index.html \
+  && ok '三页统一深色 UBNT（与两页原底色一致，不半深半浅）' || bad '配色不统一'
+# r29.7 口径回归：两页静态 warn 不能留旧文案
+for F9 in files/www/bridge/index.html files/www/ap/index.html; do
+  ! grep -Fq '本机 WDS 与 AP 均已关闭' "$F9" \
+    && ! grep -Fq '绝不能开 DHCP' "$F9" \
+    && grep -Fq '硬禁止 DHCP 服务端' "$F9" \
+    || bad "$F9 仍是 r29.7 前的旧 DHCP 口径"
+done
+ok '两页静态红字同步 r29.7 口径（AP 可开 DHCP / WDS 硬禁）'
+# 语法
+node --check files/www/vs010-ubnt-skin.js \
+  && node --check files/www/vs010-setup.js \
+  && ok '注入器 / 共用控制台 JS 语法全过' || bad 'JS 语法错'
+python3 - <<'PYU9'
+import re,pathlib,subprocess
+for n in ('bridge','ap','ubnt'):
+    s=pathlib.Path(f'files/www/{n}/index.html').read_text()
+    js=re.findall(r'<script(?![^>]*\bsrc=)[^>]*>(.*?)</script>',s,re.S)
+    for j in js:
+        r=subprocess.run(['node','--check'],input=j,text=True,capture_output=True)
+        assert r.returncode==0, (n,r.stderr[:200])
+print('  三页内联 JS node --check 全过')
+PYU9
+[ $? = 0 ] && ok '三页内联 JS 语法全过' || bad '内联 JS 语法错'
+# 六张真渲染截图
+N9=0
+for I9 in ubnt-bridge-宽屏.png ubnt-bridge-竖屏.png ubnt-ap-宽屏.png ubnt-ap-竖屏.png \
+          ubnt-宽屏.png ubnt-竖屏.png; do
+  [ -s "../demo/$I9" ] && N9=$((N9+1))
+done
+[ "$N9" = 6 ] && ok 'demo/ 三页 × 宽屏/竖屏 6 张 Chromium 真渲染截图齐' || bad "截图缺 $N9/6"
+
+echo "── r29.8：UBNT 风格概览页（零侵入预览） + VS010 6.4 移植基线 ──"
+U8=files/www/ubnt/index.html
+[ -f "$U8" ] && grep -Fq 'www/ubnt/index.html' files.manifest \
+  && ok 'UBNT 概览页存在且已注册进 files.manifest（刷机后可访问 /ubnt/）' || bad 'UBNT 页缺或未注册'
+grep -Fq "location.protocol==='file:'" "$U8" \
+  && grep -Fq 'var DEMO' "$U8" \
+  && ok '离线预览开关：file:// 或 ?demo=1 自动用内嵌 mock，双击即可看' || bad '缺离线预览'
+for C8 in /cgi-bin/vs010 /cgi-bin/bridge /cgi-bin/apstatus /cgi-bin/vs010-links; do
+  grep -Fq "$C8" "$U8" || bad "UBNT 页未复用 $C8"
+done
+ok 'UBNT 页复用 4 个公开 CGI（按模式自动选 bridge / apstatus）'
+! grep -Fq "vs010_setup/save" "$U8" && ! grep -Fq "vs010_setup/act" "$U8" \
+  && grep -Fq "vs010-setup.js" "$U8" \
+  && ok '零写入：不碰 admin 端点，设置仍由受 sysauth 保护的共用控制台接管' || bad 'UBNT 页有写入面'
+grep -Fq '@media(max-width:900px)' "$U8" \
+  && grep -Fq 'navExt{display:none}' "$U8" \
+  && ok '响应式：宽屏左侧深色栏 / 竖屏折叠成顶部 pill 导航' || bad '响应式断点缺'
+grep -Fq 'id="gaClock"' "$U8" || true
+grep -Fq 'id="clock"' "$U8" && grep -Fq 'id="uptime"' "$U8" \
+  && grep -Fq '已连接客户端' "$U8" && grep -Fq '网口状态' "$U8" \
+  && ok 'UBNT 概览含时间/运行/客户端表/网口/拓扑/KPI' || bad 'UBNT 概览信息不全'
+# 零侵入：现有两页仍然完整
+for P8 in bridge ap; do
+  M8=$P8; [ "$P8" = bridge ] && M8=wds
+  grep -Fq '系统仪表盘 · GAUGE' "files/www/$P8/index.html" \
+    && grep -Fq 'id="gaClock"' "files/www/$P8/index.html" \
+    && grep -Fq "data-mode=\"$M8\"" "files/www/$P8/index.html" \
+    && ok "$P8 页未被改动（GAUGE / 时间徽章 / 模式守卫都在）" || bad "$P8 页被破坏"
+done
+grep -Fq '<script src="../vs010-setup.js">' files/www/bridge/index.html \
+  && grep -Fq '<script src="../vs010-setup.js">' files/www/ap/index.html \
+  && ok '两页仍各自加载共用控制台，UBNT 页为第三入口' || bad '两页入口被改'
+python3 - <<'PYU8'
+import re,pathlib,subprocess
+s=pathlib.Path('files/www/ubnt/index.html').read_text()
+js=re.findall(r'<script[^>]*>(.*?)</script>',s,re.S)
+assert len(js)==1, len(js)
+r=subprocess.run(['node','--check'],input=js[0],text=True,capture_output=True)
+assert r.returncode==0, r.stderr
+print('  UBNT 内联 JS node --check 通过')
+PYU8
+[ $? = 0 ] && ok 'UBNT 页内联 JS 语法全过' || bad 'UBNT 页 JS 语法错'
+[ -f ../demo/ubnt-预览.html ] && [ -f ../demo/ubnt-宽屏.png ] && [ -f ../demo/ubnt-竖屏.png ] \
+  && ok 'demo/ 离线预览页 + 宽屏/竖屏两张效果截图齐' || bad 'demo 预览缺件'
+
+# VS010 6.4 基线
+B8=../reference/vs010-6.4-baseline
+for F8 in dts/ipq5000-vs010.dts dts/VS010-反编译DTS.dts dts/vs010.dtb \
+          bdf/board-cucc_vs010.ipq5018 bdf/board-cucc_vs010.qcn6122 \
+          art/VS010-smem_0-ART.bin config/.config.vs010 \
+          source-snippets/Device-cucc_vs010.inc source-snippets/inject-vs010.py \
+          misc/uboot-ipq50xx-cucc_vs010.bin; do
+  [ -s "$B8/$F8" ] || bad "VS010 基线缺 $F8"
+done
+ok 'VS010 6.4 基线关键件齐（DTS/反编译DTS/DTB/BDF/ART/config/片段/U-Boot）'
+[ -f "$B8/MANIFEST.json" ] && [ -f "$B8/README-6.4移植基线.md" ] \
+  && ok 'VS010 基线 MANIFEST + 移植说明在位' || bad 'VS010 基线文档缺'
+python3 - <<'PYB8'
+import json,pathlib,hashlib
+B=pathlib.Path('../reference/vs010-6.4-baseline')
+d=json.loads((B/'MANIFEST.json').read_text())
+bad=[x['file'] for x in d['files'] if hashlib.sha256((B/x['file']).read_bytes()).hexdigest()!=x['sha256']]
+assert not bad, bad
+assert len(d['files'])>=35, len(d['files'])
+print(f'  VS010 MANIFEST {len(d["files"])} 项 sha256 全匹配')
+PYB8
+[ $? = 0 ] && ok 'VS010 基线 MANIFEST 逐字节校验通过（≥35 项）' || bad 'VS010 MANIFEST 不一致'
+# DTS 花括号（防止把 r29.1 坏档收进基线）
+python3 - <<'PYD8'
+import pathlib,re
+s=pathlib.Path('../reference/vs010-6.4-baseline/dts/ipq5000-vs010.dts').read_text()
+b=re.sub(r'//[^\n]*','',s); b=re.sub(r'/\*.*?\*/','',b,flags=re.S)
+assert b.count('{')==b.count('}'), f'基线 DTS 花括号不配对 {b.count("{")}/{b.count("}")}'
+print(f'  基线 DTS {{ {b.count("{")} / }} {b.count("}")} 配对（r29.6 修正版）')
+PYD8
+[ $? = 0 ] && ok '基线 DTS 是 r29.6 修正版（59/59，不是多 }; 的 r29.1 坏档）' || bad '基线 DTS 花括号错'
+grep -Fq 'NSS 全链路是 QSDK 5.4 闭源驱动' "$B8/README-6.4移植基线.md" \
+  && grep -Fq 'GPIO 完全不同' "$B8/README-6.4移植基线.md" \
+  && grep -Fq '另起仓库' "$B8/README-6.4移植基线.md" \
+  && ok 'VS010 移植说明写清 NSS / GPIO / 分区 / 另起仓库四条边界' || bad '移植说明边界缺'
+
+echo "── r29.7：AP DHCP 开关 / 地址池 / 租期 + 两页时间·运行时长 + 3000Q 6.4 基线 ──"
+K7='dhcp_enabled dhcp_start dhcp_limit dhcp_leasetime'
+for k in $K7; do
+  c=$(grep -c "$k" files/usr/sbin/vs010-apply-config)
+  [ "$c" -ge 5 ] && ok "apply-config $k 全链路 ($c 处)" || bad "apply-config 缺 $k"
+  grep -Fq "'$k'" files/www/vs010-setup.js || grep -Fq "\"$k\"" files/www/vs010-setup.js \
+    || bad "setup.js 缺 $k"
+done
+grep -Fq "sec_dhcp" files/www/vs010-setup.js \
+  && grep -Fq "h+=sec('⑥ DHCP 服务" files/www/vs010-setup.js \
+  && grep -Fq "h+=sec('⑦ 外观'" files/www/vs010-setup.js \
+  && grep -Fq "h+=sec('⑧ 维护与自检'" files/www/vs010-setup.js \
+  && ok '控制台分组 ①…⑧ 顺序一致，⑥ 为 DHCP 服务' || bad '分组顺序不对'
+grep -Fq "k==='dhcp_enabled'" files/www/vs010-setup.js \
+  && grep -Fq "ds.querySelectorAll" files/www/vs010-setup.js \
+  && ok '滑动开关值转 0/1 + WDS 模式锁定 DHCP 输入' || bad '开关/模式锁定缺'
+grep -Fq "dhcp.lan.leasetime" files/usr/sbin/vs010-apply-config \
+  && grep -Fq "dhcp.lan.start" files/usr/sbin/vs010-apply-config \
+  && grep -Fq "dhcp.lan.limit" files/usr/sbin/vs010-apply-config \
+  && grep -Fq 'MODE" = ap' files/usr/sbin/vs010-apply-config \
+  && ok 'AP 联动写 start/limit/leasetime，WDS 硬禁止' || bad '联动/硬禁缺'
+grep -Fq 'r29.7' files/etc/init.d/vs010-mode \
+  && grep -Fq 'cfg_get dhcp_enabled' files/etc/init.d/vs010-mode \
+  && grep -Fq 'MODE_D" = ap' files/etc/init.d/vs010-mode \
+  && ok '开机 scrub 重读 user.cfg 恢复 DHCP 状态（重启不丢）' || bad '开机重读缺'
+# 编译期：dnsmasq-full 编回但默认 ignore=1（零常驻，不违背低内存）
+for C7 in .config.rax3000q .config.vs010; do
+  grep -Fqx 'CONFIG_PACKAGE_dnsmasq-full=y' "$C7" \
+    && grep -Fqx 'CONFIG_PACKAGE_dnsmasq_full_dhcp=y' "$C7" \
+    && ok "$C7 dnsmasq-full 在位（AP 可选 DHCP）" || bad "$C7 缺 dnsmasq-full"
+done
+grep -Fq "dhcp.lan.ignore='1'" files/etc/init.d/vs010-mode \
+  && ok '默认 ignore=1 + init disable，不开 DHCP 时零常驻' || bad '默认关闭缺'
+! grep -Fq 'dnsmasq-full dnsmasq' tools/strip-protocols.sh \
+  && grep -Fq 'dnsmasq-full' tools/check-no-protocols.py \
+  && ok 'strip 不再剥离 dnsmasq，check 把它列为 MUST_KEEP' || bad '编译期工具冲突'
+# 两页 GAUGE 时间 / 运行时长
+for P7 in bridge ap; do
+  f7="files/www/$P7/index.html"
+  grep -Fq 'id="gaClock"' "$f7" && grep -Fq 'id="gaUptime"' "$f7" \
+      && grep -Fq 'gaClock' "$f7" && grep -Fq 'gaUptime' "$f7" \
+      && grep -Fq 'gc=' "$f7" && grep -Fq '999px' "$f7" \
+    && ok "$P7 页 GAUGE 内置顶「时间 + 运行」椭圆徽章" || bad "$P7 页缺时间/运行时长"
+  grep -Fq '<h2>系统仪表盘 · GAUGE</h2>' "$f7" \
+    && ! grep -Fq '系统详细信息' "$f7" \
+    && ok "$P7 页仍只保留 GAUGE、未复活详细信息卡" || bad "$P7 页布局回退"
+done
+# CGI 已有 uptime/time 两个数据源
+grep -Fq '"uptime"' files/www/cgi-bin/bridge && grep -Fq '"time"' files/www/cgi-bin/bridge \
+  && grep -Fq '"uptime"' files/www/cgi-bin/apstatus && grep -Fq '"time"' files/www/cgi-bin/apstatus \
+  && ok '两页 CGI 都提供 uptime / time 字段' || bad 'CGI 字段缺'
+# 3000Q 6.4 基线
+B7=../reference/rax3000q-6.4-baseline
+[ -f "$B7/MANIFEST.json" ] && [ -f "$B7/README-6.4移植基线.md" ] \
+  && [ -f "$B7/bdf/board-cmcc_rax3000q.ipq5018" ] \
+  && [ -f "$B7/bdf/board-cmcc_rax3000q.qcn6122" ] \
+  && [ -f "$B7/dts/ipq5000-rax3000q.dts" ] \
+  && [ -f "$B7/art/RAX3000Q-mtd13-0ART.bin" ] \
+  && ok '3000Q 6.4 移植基线目录齐（DTS/BDF/ART/config/片段/说明）' || bad '基线目录缺件'
+python3 - <<'PYB7'
+import json,pathlib,hashlib
+B=pathlib.Path('../reference/rax3000q-6.4-baseline')
+d=json.loads((B/'MANIFEST.json').read_text())
+bad=[x['file'] for x in d['files'] if hashlib.sha256((B/x['file']).read_bytes()).hexdigest()!=x['sha256']]
+assert not bad, bad
+print(f'  MANIFEST {len(d["files"])} 项逐字节校验通过')
+PYB7
+[ $? = 0 ] && ok '基线 MANIFEST sha256 全匹配' || bad '基线 MANIFEST 不一致'
+grep -Fq '可以直接搬到 6.4' "$B7/README-6.4移植基线.md" \
+  && grep -Fq '必须重做' "$B7/README-6.4移植基线.md" \
+  && grep -Fq 'NSS' "$B7/README-6.4移植基线.md" \
+  && ok '移植说明区分「可复用二进制 / 必须重做源码驱动」' || bad '移植说明缺边界'
+# 语法
+sh -n files/usr/sbin/vs010-apply-config && sh -n files/etc/init.d/vs010-mode \
+  && node --check files/www/vs010-setup.js \
+  && ok 'apply-config / mode / setup.js 语法全过' || bad '语法错'
+# 负例：把非法租期塞进白名单应被自检发现（静态断言：白名单不含 HE160）
+! grep -Fq 'HE160' files/usr/sbin/vs010-apply-config | true
+grep -Fq '租期须 1m' files/usr/sbin/vs010-apply-config \
+  && ok '租期白名单校验在位（非法值会被拒）' || bad '租期校验缺'
+
+echo "── r29.6：VS010 编译失败根因修复（DTS 花括号 / Device 包列表 / 编译前护栏）──"
+python3 - <<'PYDTS'
+import pathlib,re
+p=pathlib.Path('target/ipq50xx/ipq5000-vs010.dts'); s=p.read_text()
+b=re.sub(r'//[^\n]*','',s); b=re.sub(r'/\*.*?\*/','',b,flags=re.S)
+assert b.count('{')==b.count('}'), f'DTS 花括号不配对 {{ {b.count("{")} / }} {b.count("}")}（dtc 必失败）'
+assert '#include "ipq5018.dtsi"' in s and 'bootargs-append' in s
+print(f'  DTS {{ {b.count("{")} / }} {b.count("}")} 配对')
+PYDTS
+[ $? = 0 ] && ok 'VS010 DTS 花括号配对（r29.1 时多 1 个 };，dtc 编译失败根因）' || bad 'DTS 花括号不配对'
+! grep -Fq 'ATH11K_MEM_PROFILE_256M' target/ipq50xx/device-vs010.inc \
+  && grep -Fq 'ipq-wifi-cucc_vs010' target/ipq50xx/device-vs010.inc \
+  && ok 'Device/cucc_vs010 包列表与 3000Q 对齐（无裸内存档符号）' || bad 'Device 包列表仍含 config 符号'
+! grep -Fq ':wan' target/ipq50xx/board-vs010.inc \
+  && grep -Fq '1:lan:4' target/ipq50xx/board-vs010.inc \
+  && ok 'board.d VS010 全 LAN，首启不生成 WAN' || bad 'board.d 仍有 wan'
+! grep -Fq 'CUCC VS010 (Unicom)' target/inject-vs010.py \
+  && grep -Fq 'CUCC VS010 Unicom' target/inject-vs010.py \
+  && ok 'ipq-wifi generate 标题无括号' || bad '标题括号未去'
+[ -f tools/preflight-vs010.sh ] \
+  && grep -Fq 'dtc' tools/preflight-vs010.sh \
+  && grep -Fq 'GNU make' tools/preflight-vs010.sh \
+  && grep -Fq '花括号' tools/preflight-vs010.sh \
+  && ok 'preflight-vs010.sh 在位（DTS 配对 / dtc / make 解析 / 包列表护栏）' || bad '缺 preflight'
+grep -Fq 'preflight-vs010.sh' diy-part1.sh \
+  && grep -Fq 'preflight-vs010.sh' target/inject-vs010.py \
+  && ok 'diy-part1 与 inject 都调用 preflight（编译前即拦）' || bad 'preflight 未接入'
+grep -Fq 'tee "$LOG"' ../.github/workflows/build-source.yml \
+  && grep -Fq 'compile 失败摘要' ../.github/workflows/build-source.yml \
+  && grep -Fq 'tail -n 120' ../.github/workflows/build-source.yml \
+  && ok 'workflow 失败时把错误摘要 + 日志尾部打在 step 末尾' || bad 'workflow 缺失败摘要'
+python3 -m py_compile target/inject-vs010.py && sh -n tools/preflight-vs010.sh \
+  && sh -n diy-part1.sh && ok 'inject / preflight / diy-part1 语法全过' || bad '脚本语法错'
+# 负例：把多余的 }; 塞回 → 配对检查必须 FAIL
+python3 - <<'PYNEG'
+import pathlib,re,subprocess,tempfile,sys
+s=pathlib.Path('target/ipq50xx/ipq5000-vs010.dts').read_text()
+bad=s.replace('\t};\n};\n\n&blsp1_uart1 {','\t};\n\t};\n};\n\n&blsp1_uart1 {',1)
+assert bad!=s, '负例构造失败'
+b=re.sub(r'//[^\n]*','',bad); b=re.sub(r'/\*.*?\*/','',b,flags=re.S)
+assert b.count('{')!=b.count('}'), '负例没造出不配对'
+print('  负例（多 1 个 };）→ 花括号不配对，自检会 FAIL 拦住')
+PYNEG
+[ $? = 0 ] && ok '负例：DTS 多一个 }; 会被自检拦住' || bad '负例没拦住'
+
+echo "── r29.5：DNS / WAN 编译期删除 + 内核保守精简 + NSS 加速硬护栏 ──"
+for CFG3 in .config.rax3000q .config.vs010; do
+  BAD5=""
+  # r29.7：dnsmasq-full 为 AP 可选 DHCP 服务端编回（默认 ignore=1，零常驻）；其余仍不编入
+  grep -Fqx 'CONFIG_PACKAGE_dnsmasq-full=y' "$CFG3" || BAD5="$BAD5 dnsmasq-full(应为 y)"
+  for k in dnsmasq rpcd-mod-rrdns block-mount luci-app-filetransfer; do
+    grep -Fqx "# CONFIG_PACKAGE_$k is not set" "$CFG3" || BAD5="$BAD5 $k"
+  done
+  for k in block-mount luci-app-filetransfer; do
+    ! grep -Fqx "CONFIG_DEFAULT_$k=y" "$CFG3" || BAD5="$BAD5 DEFAULT_$k"
+  done
+  [ -z "$BAD5" ] && ok "$CFG3 DNS / 冗余插件编译期全关" || bad "$CFG3 仍开着:$BAD5"
+done
+# 空壳 INCLUDE 选项（主包没选，纯 config 噪音）零 =y
+! grep -hE '^CONFIG_PACKAGE_luci-app-(passwall|ssr-plus|vssr|rclone|diskman)_INCLUDE_.*=y$' .config.rax3000q .config.vs010 \
+  && ok '科学上网类空壳 INCLUDE 选项全清（主包本就没选）' || bad '仍有空壳 INCLUDE=y'
+# ★ 加速全链路与后台核心一个都不许少
+KEEP5="kmod-ath11k kmod-mac80211 kmod-qca-nss-dp kmod-qca-nss-drv kmod-qca-nss-ecm-standard kmod-qca-nss-drv-wifi-meshmgr kmod-qca-ssdk-nohnat qca-nss-fw-ipq50xx-retail MAC80211_NSS_SUPPORT luci luci-base luci-mod-network luci-mod-status uhttpd rpcd opkg dropbear ttyd luci-app-ttyd ethtool swconfig"
+for CFG4 in .config.rax3000q .config.vs010; do
+  MISS=""
+  for k in $KEEP5; do grep -Fqx "CONFIG_PACKAGE_$k=y" "$CFG4" || MISS="$MISS $k"; done
+  [ -z "$MISS" ] && ok "$CFG4 NSS 加速 / LuCI 后台 / SSH·TTYD·opkg 全在位" || bad "$CFG4 缺:$MISS"
+done
+[ -f tools/slim-kernel.sh ] && grep -Fq 'target/linux' tools/slim-kernel.sh \
+  && grep -Fq '绝不碰' tools/slim-kernel.sh && ok '内核保守裁剪工具在位' || bad '缺 slim-kernel.sh'
+python3 - <<'PYSLIMCHK'
+import pathlib,re
+s=pathlib.Path('tools/slim-kernel.sh').read_text()
+m=re.search(r'BLACK="([^"]+)"',s); assert m,'缺 BLACK 清单'
+black=m.group(1).split()
+# 🔴 精确排除 IPv6 主体；IPV6_MROUTE / IPV6_SEG6_LWTUNNEL 等只是可选子特性，允许关。
+FORBID_EXACT={'IPV6'}
+FORBID_PREFIX=('BRIDGE','STP','NF_','NETFILTER','MAC80211','ATH11K','QCA','NSS')
+for b in black:
+    assert b not in FORBID_EXACT, f'危险主体符号 {b}'
+    assert not b.startswith(FORBID_PREFIX), f'危险前缀符号 {b}'
+for want in ('IP_MROUTE','IPV6_MROUTE','IPV6_MULTIPLE_TABLES','NAMESPACES'):
+    assert want in black, f'漏了 {want}'
+print(f'  BLACK {len(black)} 项，零 NSS/bridge/netfilter/IPV6 主体符号')
+PYSLIMCHK
+[ $? = 0 ] && ok '内核黑名单白名单式护栏（不碰 NSS/bridge/netfilter/IPV6）' || bad '内核黑名单含危险符号'
+grep -Fq '99-vs010-no-wan' tools/strip-protocols.sh \
+  && grep -Fq 'uci -q delete network.wan' tools/strip-protocols.sh \
+  && grep -Fq '不动 switch/GMAC 寄存器' tools/strip-protocols.sh \
+  && ok '编译期 uci-defaults 删 WAN/WAN6（不碰 switch 寄存器）' || bad '缺删 WAN 的 uci-defaults'
+grep -Fq 'slim-kernel.sh' diy-part2.sh \
+  && grep -Fq 'strip-protocols.sh' diy-part2.sh \
+  && ok 'diy-part2 在 defconfig 前依次调用 strip → slim-kernel' || bad '调用链缺'
+python3 - <<'PYORDER'
+import pathlib
+s=pathlib.Path('diy-part2.sh').read_text()
+assert s.index('strip-protocols.sh') < s.index('slim-kernel.sh'), 'slim 必须在 strip 之后'
+print('  顺序 OK：strip（含删 WAN）→ slim-kernel → defconfig')
+PYORDER
+[ $? = 0 ] && ok '调用顺序正确' || bad '调用顺序不对'
+grep -Fq 'MUST_KEEP' tools/check-no-protocols.py \
+  && grep -Fq -- '--no-keep' tools/check-no-protocols.py \
+  && ok 'check 含 MUST_KEEP 硬护栏（缺加速/后台即拒绝出包）' || bad 'check 缺硬护栏'
+# 真跑：造源码树跑 strip + slim-kernel
+TMP5=$(mktemp -d)
+mkdir -p "$TMP5/target/linux/ipq50xx" "$TMP5/package/base-files/files/etc/uci-defaults"
+printf 'include $(TOPDIR)/rules.mk\nDEFAULT_PACKAGES += ppp ppp-mod-pppoe ipv6helper firewall dnsmasq-full dnsmasq rpcd-mod-rrdns block-mount kmod-ath11k kmod-qca-nss-dp luci swconfig\n' > "$TMP5/target/linux/ipq50xx/Makefile"
+printf 'CONFIG_IP_MROUTE=y\nCONFIG_IPV6_MROUTE=y\nCONFIG_IPV6_MULTIPLE_TABLES=y\nCONFIG_NAMESPACES=y\nCONFIG_IPV6=y\nCONFIG_BRIDGE=y\nCONFIG_NF_CONNTRACK=y\nCONFIG_MAC80211=y\n' > "$TMP5/target/linux/ipq50xx/config-5.4"
+cp .config.rax3000q "$TMP5/.config"
+( cd "$TMP5" && sh "$OLDPWD/tools/strip-protocols.sh" && sh "$OLDPWD/tools/slim-kernel.sh" ) > "$TMP5/log" 2>&1 || { cat "$TMP5/log"; bad 'strip/slim 真跑失败'; }
+grep -Fq '99-vs010-no-wan' "$TMP5/log" && [ -f "$TMP5/package/base-files/files/etc/uci-defaults/99-vs010-no-wan" ] \
+  && grep -Fq 'uci -q delete network.wan' "$TMP5/package/base-files/files/etc/uci-defaults/99-vs010-no-wan" \
+  && ok '真跑：uci-defaults 生成且只删 WAN 逻辑接口' || bad 'uci-defaults 没生成'
+grep -Fq '# CONFIG_IP_MROUTE is not set' "$TMP5/target/linux/ipq50xx/config-5.4" \
+  && grep -Fxq 'CONFIG_IPV6=y' "$TMP5/target/linux/ipq50xx/config-5.4" \
+  && grep -Fxq 'CONFIG_BRIDGE=y' "$TMP5/target/linux/ipq50xx/config-5.4" \
+  && grep -Fxq 'CONFIG_NF_CONNTRACK=y' "$TMP5/target/linux/ipq50xx/config-5.4" \
+  && grep -Fxq 'CONFIG_MAC80211=y' "$TMP5/target/linux/ipq50xx/config-5.4" \
+  && ok '真跑：L3 组播/命名空间关掉，IPV6/bridge/netfilter/mac80211 一字未动' || bad '内核裁剪误伤依赖符号'
+! grep -Fq 'ppp kmod-ath11k' "$TMP5/target/linux/ipq50xx/Makefile" \
+  && grep -Fq 'dnsmasq' "$TMP5/target/linux/ipq50xx/Makefile" | true
+grep -Fq 'kmod-ath11k' "$TMP5/target/linux/ipq50xx/Makefile" \
+  && grep -Fq 'kmod-qca-nss-dp' "$TMP5/target/linux/ipq50xx/Makefile" \
+  && ok '真跑：DEFAULT_PACKAGES 摘掉 PPP/反向DNS，加速包未误删' || bad '加速包被误删'
+cp .config.rax3000q "$TMP5/.config"
+python3 tools/check-no-protocols.py "$TMP5/.config" > "$TMP5/chk" 2>&1 && ok '真跑：完整 config 过 defconfig 后硬校验' || { cat "$TMP5/chk"; bad '完整 config 校验没过'; }
+# 负例：删加速包 → 拒绝出包
+sed -i 's/^CONFIG_PACKAGE_kmod-qca-nss-ecm-standard=y$/# CONFIG_PACKAGE_kmod-qca-nss-ecm-standard is not set/' "$TMP5/.config"
+python3 tools/check-no-protocols.py "$TMP5/.config" > "$TMP5/chk2" 2>&1 && RC5=0 || RC5=$?
+[ "$RC5" = 1 ] && grep -Fq '::error::' "$TMP5/chk2" && ok '负例：删 ECM 加速包会被拒绝出包' || bad '加速护栏没拦住'
+# 负例：DNS 回流 → 拒绝出包
+cp .config.rax3000q "$TMP5/.config"
+  sed -i -e 's/^CONFIG_PACKAGE_dnsmasq-full=y$/# CONFIG_PACKAGE_dnsmasq-full is not set/' \
+         -e 's/^CONFIG_DEFAULT_dnsmasq-full=y$/# CONFIG_DEFAULT_dnsmasq-full is not set/' "$TMP5/.config"
+python3 tools/check-no-protocols.py "$TMP5/.config" > "$TMP5/chk3" 2>&1 && RC6=0 || RC6=$?
+[ "$RC6" = 1 ] && grep -Fq '::error::' "$TMP5/chk3" && ok '负例：删掉 dnsmasq-full（AP DHCP 失效）被拒绝出包' || bad 'dnsmasq 护栏没拦住'
+rm -rf "$TMP5"
+
+echo "── r29.4：编译期关闭 IPv6 / PPP 等协议（不只是运行期）──"
+MUST="ppp ppp-mod-pppoe kmod-ppp kmod-pppoe kmod-pppox kmod-pptp luci-proto-ppp kmod-qca-nss-drv-pppoe ipv6helper luci-proto-ipv6 odhcp6c 6in4"
+BEST="firewall ip6tables ip6tables-mod-nat libip6tc kmod-ip6tables kmod-ipt-nat6 kmod-nf-conntrack6 kmod-nf-ipt6 kmod-nf-nat6 kmod-nf-reject6"
+for CFG2 in .config.rax3000q .config.vs010; do
+  BAD=""
+  for k in $MUST $BEST; do
+    grep -Fqx "# CONFIG_PACKAGE_$k is not set" "$CFG2" || BAD="$BAD $k"
+  done
+  for k in ppp ppp-mod-pppoe ipv6helper firewall; do
+    ! grep -Fqx "CONFIG_DEFAULT_$k=y" "$CFG2" || BAD="$BAD DEFAULT_$k"
+  done
+  [ -z "$BAD" ] && ok "$CFG2 协议包编译期全关" || bad "$CFG2 仍开着:$BAD"
+done
+# 内核 IPv6 符号保留（QSDK/NSS 编译依赖），但必须靠 sysctl 全网卡关死
+grep -Fqx 'CONFIG_KERNEL_IPV6=y' .config.rax3000q \
+  && grep -Fq 'net.ipv6.conf.all.disable_ipv6=1' files/etc/sysctl.d/99-vs010-no-ipv6.conf \
+  && grep -Fq 'accept_ra=0' files/etc/sysctl.d/99-vs010-no-ipv6.conf \
+  && grep -Fq 'autoconf=0' files/etc/sysctl.d/99-vs010-no-ipv6.conf \
+  && ok '内核 IPV6 符号保留但 RA/autoconf/转发全封死（NSS 依赖不破）' || bad 'sysctl 未封死 v6'
+grep -Fq 'kill_ipv6' files/etc/init.d/vs010-mode \
+  && grep -Fq 'uci -q delete network.wan6' files/etc/init.d/vs010-mode \
+  && grep -Fq 'dhcp.lan.dhcpv6' files/etc/init.d/vs010-mode \
+  && ok '运行期 kill_ipv6 / 删 WAN6 / 关 DHCPv6 仍在' || bad '运行期 IPv6 兜底丢了'
+[ -f tools/strip-protocols.sh ] && grep -Fq 'DEFAULT_PACKAGES' tools/strip-protocols.sh \
+  && ok '编译期剥离工具在位（连 target 默认包集合一起摘）' || bad '缺 strip-protocols.sh'
+[ -f tools/check-no-protocols.py ] && grep -Fq '::error::' tools/check-no-protocols.py \
+  && ok 'defconfig 后硬校验工具在位' || bad '缺 check-no-protocols.py'
+grep -Fq 'strip-protocols.sh' diy-part2.sh \
+  && ok 'diy-part2 在 make defconfig 之前调用剥离' || bad 'diy-part2 没调剥离'
+grep -Fq 'check-no-protocols.py' ../.github/workflows/build-source.yml \
+  && ok 'workflow 在 make defconfig 之后硬校验' || bad 'workflow 没校验'
+python3 - <<'PYR294'
+import pathlib,re
+s=pathlib.Path('../.github/workflows/build-source.yml').read_text()
+a=s.index('\n        make defconfig\n')
+b=s.index('check-no-protocols.py',a)
+c=s.index('\n        make download -j8\n',b)
+print('  顺序 OK：defconfig → 校验 → download')
+PYR294
+[ $? = 0 ] && ok '校验顺序正确（defconfig 后 / download 前）' || bad '校验顺序不对'
+# 真跑：造一份带 =y 的假 .config 验证 check 脚本会拦
+TMP=$(mktemp -d)
+printf 'CONFIG_PACKAGE_ppp=y\nCONFIG_PACKAGE_ipv6helper=y\nCONFIG_PACKAGE_dropbear=y\n' > "$TMP/.config"
+python3 tools/check-no-protocols.py "$TMP/.config" > "$TMP/out" 2>&1 && RC=0 || RC=$?
+[ "$RC" = 1 ] && grep -Fq '::error::' "$TMP/out" && ok '负例：defconfig 拉回 ppp/ipv6helper 会被拒绝出包' || bad '校验脚本没拦住'
+printf '# CONFIG_PACKAGE_ppp is not set\n# CONFIG_PACKAGE_ipv6helper is not set\n' > "$TMP/.config"
+python3 tools/check-no-protocols.py --no-keep "$TMP/.config" >/dev/null 2>&1 && ok '正例：全关时校验通过（单元测试跳过 KEEP）' || bad '正例被误拦'
+rm -rf "$TMP"
+
+echo "── r29.2：LuCI 后台 → 网桥 / AP 状态页 双向导航 ──"
+CT2=files/usr/lib/lua/luci/controller/admin/vs010.lua
+grep -Fq 'entry({"admin", "vs010_home"' "$CT2" \
+  && grep -Fq 'function go_home()' "$CT2" \
+  && grep -Fq 'http.redirect' "$CT2" \
+  && grep -Fq '"/ap/"' "$CT2" && grep -Fq '"/bridge/"' "$CT2" \
+  && ok 'LuCI 一级菜单「← 返回网桥/AP 状态」+ 按 mode 302 回独立界面' || bad '缺 LuCI 回跳菜单'
+for T in vs010_bridge.htm vs010_ap.htm vs010_console.htm vs010_ports.htm vs010_role.htm vs010_setup.htm; do
+  P="files/usr/lib/lua/luci/view/$T"
+  grep -Fq 'class="vs010Back"' "$P" && grep -Fq 'border-radius:999px' "$P" \
+    && ok "$T 有胶囊「返回状态页」按钮" || bad "$T 缺返回按钮"
+done
+grep -Fq '网口状态 · PORT STATUS' files/usr/lib/lua/luci/view/vs010_ports.htm \
+  && ! grep -Fq '已插网线 · 网口速率' files/usr/lib/lua/luci/view/vs010_ports.htm \
+  && ok 'LuCI 网口状态页标题与 r29 统一' || bad 'LuCI 页还叫网口速率'
+! grep -R -Fq '网口速率</a>' files/usr/lib/lua/luci/view/ \
+  && ok '底部链接文案全改「网口状态」' || bad '仍有旧「网口速率」链接'
+! grep -R -Fq 'vs010-theme' files/usr/lib/lua/luci/view/ \
+  && ok '不再引用源码线不存在的 vs010-theme 命令' || bad '仍引用不存在的命令'
+grep -Fq '也可单独打开' files/usr/lib/lua/luci/view/vs010_bridge.htm \
+  && grep -Fq 'LuCI 左侧一级菜单' files/usr/lib/lua/luci/view/vs010_bridge.htm \
+  && ok 'iframe 页仍保留独立直链与一级菜单提示' || bad 'bridge iframe 直链丢了'
+grep -Fq 'data-mode="auto"' files/usr/lib/lua/luci/view/vs010_setup.htm \
+  && ok '常用设置面板本体未动（导航里 /bridge/ /ap/ 仍在）' || bad '设置面板被改坏'
+
+>>>>>>> Stashed changes
 echo "── r29.1：GitHub workflow_dispatch schema（choice options 必须字符串）──"
 python3 - <<'PYR291'
 import yaml,pathlib
@@ -832,7 +1585,21 @@ assert 'uci -q set "wireless.$d.htmode=HT160"' in wp, 'wds-pair 的已验证 HT1
 assert 'HT160' in md and '勿改 HE160' in md, '默认值说明丢失'
 js=pathlib.Path('files/www/vs010-setup.js').read_text()
 assert "['HT160','HT80','HT40']" in js, '前端下拉仍含 HE160/VHT80'
-print('  HTMODE 白名单 / 开机保护 / wds-pair 一致性 / 前端下拉 OK')
+# ── r29.12 追加：双频段频宽互不串写 ──
+assert "case \"$v\" in ''|HT40|HT20)" in ac, '2.4G ht24 白名单缺'
+assert '2.4G 频宽只支持 HT40' in ac, 'ht24 错误提示缺'
+assert 'htmode ht24 txpower' in ac, 'get/apply/save 清单漏 ht24'
+assert '"ht24":"HT40"' in ac, '2.4G 默认不是 20/40 共存'
+assert '"htmode":"HT160"' in ac, '5.8G 默认不是 160MHz'
+assert 'H5=$(cfg_get htmode)' in ac and 'H2=$(cfg_get ht24)' in ac, 'AP 内联未分频段'
+assert 'case "$H5" in HT160|HT80|HT40)' in ac, 'AP 内联 5G 未写频宽'
+assert 'case "$H2" in HT40|HT20)' in ac, 'AP 内联 2.4G 未写频宽'
+assert 'HT2=$(cfg_get ht24)' in md and 'case "$HT2" in HT40|HT20)' in md, '开机脚本 2.4G 分支缺'
+assert 'ht24(2.4G)=$HT2' in md, '开机日志缺双频宽'
+assert 'WDS 回程固定在 5.8G 160MHz' in wp, 'wds-pair 未注明 160MHz'
+assert 'selLabels(' in js and "[['HT40','HT40 · 20/40MHz 共存']" in js, '前端 2.4G 下拉缺'
+assert "'htmode','ht24','txpower'" in js and "ht24:'HT40'" in js, '前端字段/默认值缺'
+print('  HTMODE 5.8G / ht24 2.4G / 开机双分支 / AP 内联 / wds-pair 160 / 双下拉 OK')
 PYHT
 [ $? = 0 ] && ok '无线频宽不会写入 qcawifi.sh 不认的 HE160（防 5G 起不来）' || bad '无线频宽仍有踩雷值'
 for f in files/etc/init.d/vs010-mode files/usr/sbin/vs010-apply-config files/usr/sbin/vs010-wds-pair \
@@ -890,6 +1657,10 @@ print('  WEB 资源齐备 / 两页内联 JS 零语法错 / 高级入口在位 �
 PYWEB
 [ $? = 0 ] && ok '两个界面依赖的资源全在包内且脚本零语法错' || bad '网页资源/脚本异常'
 
+<<<<<<< Updated upstream
 [ "$F" = 0 ] && echo "RESULT: PASS —— 第 29.1 次：workflow schema 合法 / 网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
+=======
+[ "$F" = 0 ] && echo "RESULT: PASS —— 第 29.12 次：2.4G 20/40 共存 / 5.8G 160MHz / WDS-AP（仿UBNT）标识 / WDS 客户端搜索 SSID / 自动跟随频段 / 四界面全互访 / 登录贯通 / 三界面同款 UBNT / UBNT 概览页 / VS010 6.4 基线 / AP DHCP / 时间·运行时长 / 3000Q 6.4 基线 / VS010 DTS 编译失败根因修复 / DNS/WAN 删除 + NSS 加速护栏 / IPv6/PPP 编译期关闭 / README 精简 / LuCI 双向导航 / workflow schema 合法 / 网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
+>>>>>>> Stashed changes
              || echo "RESULT: FAIL"
 exit $F
