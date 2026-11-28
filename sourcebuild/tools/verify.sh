@@ -724,8 +724,6 @@ echo
 
 
 
-<<<<<<< Updated upstream
-=======
 
 
 
@@ -1465,7 +1463,6 @@ grep -Fq '也可单独打开' files/usr/lib/lua/luci/view/vs010_bridge.htm \
 grep -Fq 'data-mode="auto"' files/usr/lib/lua/luci/view/vs010_setup.htm \
   && ok '常用设置面板本体未动（导航里 /bridge/ /ap/ 仍在）' || bad '设置面板被改坏'
 
->>>>>>> Stashed changes
 echo "── r29.1：GitHub workflow_dispatch schema（choice options 必须字符串）──"
 python3 - <<'PYR291'
 import yaml,pathlib
@@ -1657,10 +1654,6 @@ print('  WEB 资源齐备 / 两页内联 JS 零语法错 / 高级入口在位 �
 PYWEB
 [ $? = 0 ] && ok '两个界面依赖的资源全在包内且脚本零语法错' || bad '网页资源/脚本异常'
 
-<<<<<<< Updated upstream
-[ "$F" = 0 ] && echo "RESULT: PASS —— 第 29.1 次：workflow schema 合法 / 网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
-=======
 [ "$F" = 0 ] && echo "RESULT: PASS —— 第 29.12 次：2.4G 20/40 共存 / 5.8G 160MHz / WDS-AP（仿UBNT）标识 / WDS 客户端搜索 SSID / 自动跟随频段 / 四界面全互访 / 登录贯通 / 三界面同款 UBNT / UBNT 概览页 / VS010 6.4 基线 / AP DHCP / 时间·运行时长 / 3000Q 6.4 基线 / VS010 DTS 编译失败根因修复 / DNS/WAN 删除 + NSS 加速护栏 / IPv6/PPP 编译期关闭 / README 精简 / LuCI 双向导航 / workflow schema 合法 / 网口状态 6 列 / 状态栏·选项全椭圆 / Lua 后台可加载 / 根跳转生效 / 无线频宽安全 / 编译链无断点 / 默认网桥 / 未登录只读" \
->>>>>>> Stashed changes
              || echo "RESULT: FAIL"
 exit $F
